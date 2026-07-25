@@ -126,7 +126,7 @@ export const PassengerView: React.FC = () => {
   const destMarkerRef = useRef<L.Marker | null>(null);
   const debounceTimerRef = useRef<NodeJS.Timeout | null>(null);
 
-  // 1. Get User Geolocation
+  // 1. Get User Geolocation & Watch Position
   useEffect(() => {
     if ('geolocation' in navigator) {
       navigator.geolocation.getCurrentPosition(
@@ -142,6 +142,21 @@ export const PassengerView: React.FC = () => {
         },
         { enableHighAccuracy: true, timeout: 5000 }
       );
+
+      const watchId = navigator.geolocation.watchPosition(
+        (pos) => {
+          const loc = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+          setUserLocation(loc);
+        },
+        (err) => {
+          console.warn('Geolocation watch error:', err);
+        },
+        { enableHighAccuracy: true, timeout: 10000, maximumAge: 10000 }
+      );
+
+      return () => {
+        navigator.geolocation.clearWatch(watchId);
+      };
     }
   }, []);
 
@@ -160,14 +175,16 @@ export const PassengerView: React.FC = () => {
       maxZoom: 19,
     }).addTo(map);
 
-    // Map tap/click updates location
+    // Map tap/click sets destination
     map.on('click', (e: L.LeafletMouseEvent) => {
       const clickedLoc = {
+        name: 'Destination (Map)',
         lat: Math.round(e.latlng.lat * 10000) / 10000,
         lng: Math.round(e.latlng.lng * 10000) / 10000,
       };
       
-      setUserLocation(clickedLoc);
+      setDestination(clickedLoc);
+      setDestinationInput(clickedLoc.name);
     });
 
     mapRef.current = map;
@@ -180,23 +197,15 @@ export const PassengerView: React.FC = () => {
     };
   }, []);
 
-  // 3. Sync User Marker
+  // 3. Sync User Marker (Non-draggable, real GPS position)
   useEffect(() => {
     if (!mapRef.current) return;
 
     if (!userMarkerRef.current) {
       const marker = L.marker([userLocation.lat, userLocation.lng], {
-        draggable: true,
+        draggable: false,
         icon: createUserIcon(),
       }).addTo(mapRef.current);
-
-      marker.on('dragend', () => {
-        const pos = marker.getLatLng();
-        setUserLocation({
-          lat: Math.round(pos.lat * 10000) / 10000,
-          lng: Math.round(pos.lng * 10000) / 10000,
-        });
-      });
 
       userMarkerRef.current = marker;
     } else {
