@@ -2,11 +2,10 @@ import sharp from 'sharp';
 import fs from 'fs';
 import path from 'path';
 
-const LOGO_URL = 'https://i.ibb.co/ynMdVvwn/chouflogotransparant-1.png';
-const BG_COLOR = '#0f172a'; // dark slate background matching manifest background_color
+const LOGO_URL = 'https://i.ibb.co/dwgQycV6/choufpictogram.png';
 
 async function generateIcons() {
-  console.log('Fetching logo from:', LOGO_URL);
+  console.log('Fetching Chouf pictogram from:', LOGO_URL);
   const response = await fetch(LOGO_URL);
   if (!response.ok) {
     throw new Error(`Failed to fetch logo: ${response.statusText}`);
@@ -15,35 +14,23 @@ async function generateIcons() {
   const logoBuffer = Buffer.from(arrayBuffer);
 
   const targets = [
-    { name: 'pwa-192x192.png', size: 192, innerSize: 120 },
-    { name: 'pwa-512x512.png', size: 512, innerSize: 320 },
-    { name: 'icon-192.png', size: 192, innerSize: 120 },
-    { name: 'icon-512.png', size: 512, innerSize: 320 },
+    { name: 'pwa-192x192.png', size: 192 },
+    { name: 'pwa-512x512.png', size: 512 },
+    { name: 'icon-192.png', size: 192 },
+    { name: 'icon-512.png', size: 512 },
+    { name: 'apple-touch-icon.png', size: 180 },
+    { name: 'favicon.png', size: 64 },
   ];
 
-  for (const { name, size, innerSize } of targets) {
-    console.log(`Generating ${name} (${size}x${size}, logo inner size ${innerSize}x${innerSize})...`);
+  for (const { name, size } of targets) {
+    console.log(`Generating ${name} (${size}x${size})...`);
     
-    // Resize logo while keeping aspect ratio
-    const resizedLogo = await sharp(logoBuffer)
-      .resize(innerSize, innerSize, {
-        fit: 'contain',
-        background: { r: 0, g: 0, b: 0, alpha: 0 }
+    const finalBuffer = await sharp(logoBuffer)
+      .resize(size, size, {
+        fit: 'cover',
       })
+      .png()
       .toBuffer();
-
-    // Composite onto background
-    const finalBuffer = await sharp({
-      create: {
-        width: size,
-        height: size,
-        channels: 4,
-        background: BG_COLOR
-      }
-    })
-    .composite([{ input: resizedLogo, gravity: 'center' }])
-    .png()
-    .toBuffer();
 
     const outPath = path.join(process.cwd(), 'public', name);
     fs.writeFileSync(outPath, finalBuffer);

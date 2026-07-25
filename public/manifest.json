@@ -1,12 +1,12 @@
 {
-  "name": "Chouf Taxi Maroc",
+  "name": "Chouf",
   "short_name": "Chouf",
   "description": "Application PWA Taxi pour passagers et chauffeurs au Maroc",
   "start_url": "/",
   "display": "standalone",
   "orientation": "portrait",
   "background_color": "#0f172a",
-  "theme_color": "#d97706",
+  "theme_color": "#F57C00",
   "icons": [
     {
       "src": "/pwa-192x192.png",
