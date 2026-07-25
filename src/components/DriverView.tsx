@@ -17,6 +17,7 @@ import {
   isStandaloneApp,
 } from '../lib/notifications';
 import { t, useLanguage } from '../lib/i18n';
+import { triggerPWAInstall, useIsStandalone } from '../lib/pwa';
 
 const DEFAULT_DRIVER_CENTER = { lat: 34.015, lng: -6.832 }; // Rabat center for driver
 
@@ -120,6 +121,7 @@ const createDestinationIcon = () =>
 
 export const DriverView: React.FC = () => {
   useLanguage();
+  const isStandalone = useIsStandalone();
   const [driverLocation, setDriverLocation] = useState<{ lat: number; lng: number }>(DEFAULT_DRIVER_CENTER);
   const [driverUserId, setDriverUserId] = useState<string | null>(null);
 
@@ -715,6 +717,18 @@ export const DriverView: React.FC = () => {
             </div>
           )}
         </div>
+
+        {/* Optional Install Button for drivers */}
+        {!isStandalone && (
+          <button
+            type="button"
+            onClick={triggerPWAInstall}
+            className="w-full py-2.5 px-4 bg-amber-500/10 hover:bg-amber-500/20 active:bg-amber-500/25 text-[#D97706] font-extrabold text-xs rounded-2xl border border-amber-500/30 flex items-center justify-center gap-2 cursor-pointer transition-all active:scale-[0.98]"
+          >
+            <span className="text-sm">📲</span>
+            <span>{t('pwa', 'installApp')}</span>
+          </button>
+        )}
 
         <button
           type="button"

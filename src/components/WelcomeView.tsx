@@ -1,6 +1,7 @@
 import React from 'react';
 import { t, useLanguage } from '../lib/i18n';
 import { LanguageToggle } from './LanguageToggle';
+import { triggerPWAInstall, useIsStandalone } from '../lib/pwa';
 
 interface WelcomeViewProps {
   onSelectRole: (role: 'passagier' | 'chauffeur') => void;
@@ -9,6 +10,7 @@ interface WelcomeViewProps {
 export const WelcomeView: React.FC<WelcomeViewProps> = ({ onSelectRole }) => {
   // Hook usage triggers re-render on language change
   useLanguage();
+  const isStandalone = useIsStandalone();
 
   return (
     <div className="relative w-full h-full min-h-[80vh] flex flex-col items-center justify-between p-6 bg-slate-50/50 text-slate-900 font-sans overflow-y-auto">
@@ -51,7 +53,7 @@ export const WelcomeView: React.FC<WelcomeViewProps> = ({ onSelectRole }) => {
           <button
             type="button"
             onClick={() => onSelectRole('passagier')}
-            className="w-full py-4 px-6 bg-[#F57C00] hover:bg-[#e07000] active:bg-[#c76300] text-white font-extrabold text-base rounded-2xl shadow-lg shadow-[#F57C00]/25 transition-all active:scale-[0.98] flex items-center justify-center gap-3 border border-[#F57C00]"
+            className="w-full py-4 px-6 bg-[#F57C00] hover:bg-[#e07000] active:bg-[#c76300] text-white font-extrabold text-base rounded-2xl shadow-lg shadow-[#F57C00]/25 transition-all active:scale-[0.98] flex items-center justify-center gap-3 border border-[#F57C00] cursor-pointer"
           >
             <span className="text-xl">🙋‍♂️</span>
             <span>{t('welcome', 'passengerBtn')}</span>
@@ -60,11 +62,23 @@ export const WelcomeView: React.FC<WelcomeViewProps> = ({ onSelectRole }) => {
           <button
             type="button"
             onClick={() => onSelectRole('chauffeur')}
-            className="w-full py-4 px-6 bg-white hover:bg-slate-50 active:bg-slate-100 text-slate-900 font-extrabold text-base rounded-2xl border-2 border-[#F57C00] shadow-md transition-all active:scale-[0.98] flex items-center justify-center gap-3"
+            className="w-full py-4 px-6 bg-white hover:bg-slate-50 active:bg-slate-100 text-slate-900 font-extrabold text-base rounded-2xl border-2 border-[#F57C00] shadow-md transition-all active:scale-[0.98] flex items-center justify-center gap-3 cursor-pointer"
           >
             <span className="text-xl">🚖</span>
             <span className="text-[#F57C00]">{t('welcome', 'driverBtn')}</span>
           </button>
+
+          {/* Visible "Installer l'application" Button */}
+          {!isStandalone && (
+            <button
+              type="button"
+              onClick={triggerPWAInstall}
+              className="w-full py-3.5 px-5 bg-amber-500/10 hover:bg-amber-500/20 active:bg-amber-500/25 text-[#D97706] font-extrabold text-sm rounded-2xl border border-amber-500/30 shadow-xs transition-all active:scale-[0.98] flex items-center justify-center gap-2.5 mt-2 cursor-pointer"
+            >
+              <span className="text-base">📲</span>
+              <span>{t('pwa', 'installApp')}</span>
+            </button>
+          )}
         </div>
       </div>
 

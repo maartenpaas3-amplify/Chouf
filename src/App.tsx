@@ -6,9 +6,11 @@ import { WelcomeView } from './components/WelcomeView';
 import { LanguageToggle } from './components/LanguageToggle';
 import { PWAPrompt } from './components/PWAPrompt';
 import { t, useLanguage } from './lib/i18n';
+import { triggerPWAInstall, useIsStandalone } from './lib/pwa';
 
 export default function App() {
   const [lang] = useLanguage();
+  const isStandalone = useIsStandalone();
 
   useEffect(() => {
     document.documentElement.dir = lang === 'ar' ? 'rtl' : 'ltr';
@@ -115,8 +117,21 @@ export default function App() {
             </div>
           </div>
 
-          {/* Language Toggle */}
-          <LanguageToggle />
+          {/* Language Toggle & PWA Install Button */}
+          <div className="flex items-center gap-2">
+            {!isStandalone && (
+              <button
+                type="button"
+                onClick={triggerPWAInstall}
+                className="inline-flex items-center gap-1.5 px-2.5 py-1.5 bg-amber-50 hover:bg-amber-100 active:bg-amber-200 text-[#D97706] border border-amber-200/90 rounded-2xl text-xs font-extrabold transition-all active:scale-95 shrink-0 shadow-2xs cursor-pointer"
+                title={t('pwa', 'installApp')}
+              >
+                <span className="text-xs">📲</span>
+                <span className="hidden sm:inline">{t('pwa', 'installApp')}</span>
+              </button>
+            )}
+            <LanguageToggle />
+          </div>
         </header>
       )}
 
