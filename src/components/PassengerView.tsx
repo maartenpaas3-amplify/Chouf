@@ -120,15 +120,6 @@ export const PassengerView: React.FC = () => {
     timestamp: 0,
   });
 
-  // Phone modal logic (First time opening app only)
-  const [phone, setPhone] = useState<string>(() => {
-    return localStorage.getItem('chouf_passenger_phone') || '';
-  });
-  const [showPhoneModal, setShowPhoneModal] = useState<boolean>(() => {
-    return !localStorage.getItem('chouf_passenger_phone');
-  });
-  const [phoneInput, setPhoneInput] = useState('');
-
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<L.Map | null>(null);
   const userMarkerRef = useRef<L.Marker | null>(null);
@@ -245,7 +236,7 @@ export const PassengerView: React.FC = () => {
 
   // 5. Automatically publish / update visible state in Supabase & local taxiStore
   useEffect(() => {
-    if (showPhoneModal || !isActive) return;
+    if (!isActive) return;
 
     const now = Date.now();
     const last = lastSyncRef.current;
@@ -292,7 +283,7 @@ export const PassengerView: React.FC = () => {
       taxiStore.addRequest({
         id: activeRequestId,
         passengerName: t('header', 'passenger'),
-        passengerPhone: phone,
+        passengerPhone: '',
         pickup: { lat: userLocation.lat, lng: userLocation.lng, name: t('passenger', 'myPosition') },
         destination: destination
           ? { lat: destination.lat, lng: destination.lng, name: destination.name }
@@ -327,7 +318,7 @@ export const PassengerView: React.FC = () => {
           bestemming_lng: destination?.lng ?? null,
           bestemming_tekst: destination?.name ?? null,
           haast: isPresse,
-          telefoon: phone || null,
+          telefoon: null,
           user_id: validUserId || null,
           aangemaakt_op: nowIso,
           laatst_geupdate_op: nowIso,
@@ -383,7 +374,7 @@ export const PassengerView: React.FC = () => {
 
       syncToSupabase();
     }
-  }, [userLocation, destination, isPresse, isActive, showPhoneModal, phone, activeRequestId, userId]);
+  }, [userLocation, destination, isPresse, isActive, activeRequestId, userId]);
 
   // Perform Nominatim Search
   const performSearch = async (query: string) => {
@@ -474,15 +465,6 @@ export const PassengerView: React.FC = () => {
     }
   };
 
-  // Handle phone submit
-  const handlePhoneSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    const cleanPhone = phoneInput.trim() || '+212 600 000000';
-    localStorage.setItem('chouf_passenger_phone', cleanPhone);
-    setPhone(cleanPhone);
-    setShowPhoneModal(false);
-  };
-
   // Select place from hardcoded list
   const handleSelectPlace = (place: { name: string; lat: number; lng: number }) => {
     setDestination(place);
@@ -539,42 +521,6 @@ export const PassengerView: React.FC = () => {
 
   return (
     <div className="relative w-full h-full flex flex-col bg-slate-100 text-slate-900 overflow-hidden font-sans">
-      {/* First-time Phone Modal */}
-      {showPhoneModal && (
-        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
-          <form
-            onSubmit={handlePhoneSubmit}
-            className="bg-white border border-slate-100 rounded-3xl p-6 max-w-sm w-full space-y-4 shadow-2xl"
-          >
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-2xl bg-[#F57C00]/10 border border-[#F57C00]/20 flex items-center justify-center text-[#F57C00] font-bold text-lg">
-                📱
-              </div>
-              <div>
-                <h3 className="font-bold text-base text-slate-900">{t('passenger', 'phoneModalTitle')}</h3>
-                <p className="text-xs text-slate-500">
-                  {t('passenger', 'phoneModalSubtitle')}
-                </p>
-              </div>
-            </div>
-            <input
-              type="tel"
-              required
-              value={phoneInput}
-              onChange={(e) => setPhoneInput(e.target.value)}
-              placeholder={t('passenger', 'phonePlaceholder')}
-              className="w-full px-4 py-3.5 bg-slate-50 border border-slate-200 rounded-2xl text-sm text-slate-900 placeholder-slate-400 focus:outline-none focus:border-[#F57C00] focus:bg-white focus:ring-2 focus:ring-[#F57C00]/20 transition"
-            />
-            <button
-              type="submit"
-              className="w-full py-3.5 bg-[#F57C00] hover:bg-[#e07000] active:bg-[#c76300] text-white font-extrabold text-sm rounded-2xl transition-all shadow-lg shadow-[#F57C00]/25 active:scale-[0.98]"
-            >
-              {t('passenger', 'continue')}
-            </button>
-          </form>
-        </div>
-      )}
-
       {/* Map View */}
       <div className="relative flex-1 w-full h-full min-h-[40vh]">
         <div ref={mapContainerRef} className="w-full h-full" />
