@@ -447,7 +447,7 @@ export const DriverView: React.FC = () => {
       }).addTo(mapRef.current);
 
       marker.bindPopup(`
-        <div style="font-family: sans-serif; text-align: center; color: #0f172a; padding: 2px;">
+        <div style="font-family: sans-serif; text-align: center; color: #ffffff; padding: 2px;">
           <strong style="font-size: 13px;">${t('driver', 'yourPosition')}</strong>
         </div>
       `);
@@ -507,18 +507,18 @@ export const DriverView: React.FC = () => {
         : `<span style="background: #F57C00; color: white; padding: 2px 6px; border-radius: 4px; font-weight: bold; font-size: 10px;">${t('driver', 'popupWaiting')}</span>`;
 
       const destText = pin.bestemming_tekst
-        ? `<div style="font-size: 11px; margin-top: 4px; color: #334155;">🏁 ${t('driver', 'legendDestination')}: <strong>${pin.bestemming_tekst}</strong></div>`
-        : `<div style="font-size: 11px; margin-top: 4px; color: #64748b; font-style: italic;">${t('driver', 'popupNoDest')}</div>`;
+        ? `<div style="font-size: 11px; margin-top: 4px; color: #cbd5e1;">🏁 ${t('driver', 'legendDestination')}: <strong style="color: #ffffff;">${pin.bestemming_tekst}</strong></div>`
+        : `<div style="font-size: 11px; margin-top: 4px; color: #94a3b8; font-style: italic;">${t('driver', 'popupNoDest')}</div>`;
 
       const googleNavUrl = `https://www.google.com/maps/dir/?api=1&destination=${pickupLat},${pickupLng}`;
 
       passengerMarker.bindPopup(`
         <div style="font-family: sans-serif; padding: 2px; min-width: 170px;">
           <div style="display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 6px;">
-            <strong style="font-size: 12px; color: #0f172a;">${t('driver', 'popupPassenger')}</strong>
+            <strong style="font-size: 12px; color: #ffffff;">${t('driver', 'popupPassenger')}</strong>
             ${statusBadge}
           </div>
-          <div style="font-size: 11px; color: #475569;">Distance: <strong>${distKm} km</strong></div>
+          <div style="font-size: 11px; color: #cbd5e1;">Distance: <strong style="color: #ffffff;">${distKm} km</strong></div>
           ${destText}
           <a
             href="${googleNavUrl}"
@@ -559,8 +559,8 @@ export const DriverView: React.FC = () => {
           icon: createDestinationIcon(),
         });
         destMarker.bindPopup(`
-          <div style="font-family: sans-serif; font-size: 11px; color: #0f172a;">
-            🏁 ${t('driver', 'legendDestination')}: <strong>${pin.bestemming_tekst || t('driver', 'legendDestination')}</strong>
+          <div style="font-family: sans-serif; font-size: 11px; color: #ffffff;">
+            🏁 ${t('driver', 'legendDestination')}: <strong style="color: #ffffff;">${pin.bestemming_tekst || t('driver', 'legendDestination')}</strong>
           </div>
         `);
         destMarker.addTo(layerGroupRef.current!);
