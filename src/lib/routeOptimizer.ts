@@ -243,9 +243,9 @@ export function findOptimizedDriverRoute(
               .slice(0, formattedStops.length - 1)
               .map((st) => `${st.lat},${st.lng}`)
               .join('|');
-            googleMapsUrl = `https://www.google.com/maps/dir/?api=1&origin=${originStr}&destination=${destStr}&waypoints=${waypoints}`;
+            googleMapsUrl = `https://www.google.com/maps/dir/?api=1&origin=${originStr}&destination=${destStr}&waypoints=${waypoints}&travelmode=driving`;
           } else {
-            googleMapsUrl = `https://www.google.com/maps/dir/?api=1&origin=${originStr}&destination=${destStr}`;
+            googleMapsUrl = `https://www.google.com/maps/dir/?api=1&origin=${originStr}&destination=${destStr}&travelmode=driving`;
           }
         }
 

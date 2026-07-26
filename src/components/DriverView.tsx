@@ -986,15 +986,19 @@ export const DriverView: React.FC = () => {
                       </span>
                     </button>
 
-                    <a
-                      href={optimizedRoute.googleMapsUrl}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="flex-1 py-2 px-3 bg-emerald-600 hover:bg-emerald-500 text-white font-extrabold text-[11px] rounded-xl border border-emerald-500 flex items-center justify-center gap-1.5 transition-all shadow-md shadow-emerald-600/30 text-decoration-none"
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (!optimizedRoute || !optimizedRoute.stops || optimizedRoute.stops.length === 0) return;
+                        console.log('[NAV] Opening Google Maps route:', optimizedRoute.googleMapsUrl);
+                        window.open(optimizedRoute.googleMapsUrl, '_blank', 'noopener,noreferrer');
+                      }}
+                      disabled={!optimizedRoute || !optimizedRoute.stops || optimizedRoute.stops.length === 0}
+                      className="flex-1 py-2 px-3 bg-emerald-600 hover:bg-emerald-500 active:bg-emerald-700 disabled:opacity-50 text-white font-extrabold text-[11px] rounded-xl border border-emerald-500 flex items-center justify-center gap-1.5 transition-all shadow-md shadow-emerald-600/30 cursor-pointer disabled:cursor-not-allowed"
                     >
                       <span>🧭</span>
-                      <span>{t('driver', 'startRouteNav')}</span>
-                    </a>
+                      <span>{t('driver', 'navWithGoogleMaps')}</span>
+                    </button>
                   </div>
                 </div>
               ) : (
