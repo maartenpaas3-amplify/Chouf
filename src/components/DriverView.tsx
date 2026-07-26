@@ -795,7 +795,10 @@ export const DriverView: React.FC = () => {
       </div>
 
       {/* Bottom Sheet Panel (InDrive style light rounded card) */}
-      <div className="relative w-full bg-white rounded-t-[2.5rem] p-5 space-y-3.5 shadow-[0_-10px_30px_rgba(0,0,0,0.08)] border-t border-slate-100 z-30 -mt-6">
+      <div
+        className="relative w-full max-h-[60vh] sm:max-h-[65vh] overflow-y-auto bg-white rounded-t-[2.5rem] p-5 space-y-3.5 shadow-[0_-10px_30px_rgba(0,0,0,0.08)] border-t border-slate-100 z-30 -mt-6 shrink-0"
+        style={{ paddingBottom: 'calc(2rem + env(safe-area-inset-bottom, 0px))' }}
+      >
         {/* Decorative Top Pill Handle */}
         <div className="w-12 h-1.5 bg-slate-200 rounded-full mx-auto -mt-1 mb-0.5" />
 
