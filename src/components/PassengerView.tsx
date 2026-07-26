@@ -5,7 +5,6 @@ import 'leaflet/dist/leaflet.css';
 import { taxiStore } from '../lib/store';
 import { supabase, isSupabaseConfigured, getDistanceMeters, getOrCreateAnonymousUser } from '../lib/supabase';
 import { t, useLanguage } from '../lib/i18n';
-import { triggerPWAInstall, useIsStandalone } from '../lib/pwa';
 
 // Hardcoded places in Rabat
 const RABAT_DESTINATIONS = [
@@ -76,7 +75,6 @@ const createDestinationIcon = () =>
 
 export const PassengerView: React.FC = () => {
   const [lang] = useLanguage();
-  const isStandalone = useIsStandalone();
   const [userLocation, setUserLocation] = useState<{ lat: number; lng: number }>(DEFAULT_CENTER);
   const [destination, setDestination] = useState<{ name: string; lat: number; lng: number } | null>(null);
   const [destinationInput, setDestinationInput] = useState('');
@@ -667,18 +665,6 @@ export const PassengerView: React.FC = () => {
             className="w-full py-4 bg-rose-600 hover:bg-rose-700 active:bg-rose-800 text-white font-extrabold text-sm rounded-2xl shadow-lg shadow-rose-600/25 transition-all active:scale-[0.98] cursor-pointer"
           >
             {t('passenger', 'stop')}
-          </button>
-        )}
-
-        {/* Optional Install Button for returning users */}
-        {!isStandalone && (
-          <button
-            type="button"
-            onClick={triggerPWAInstall}
-            className="w-full py-2.5 px-4 bg-amber-500/10 hover:bg-amber-500/20 active:bg-amber-500/25 text-[#D97706] font-extrabold text-xs rounded-xl border border-amber-500/30 flex items-center justify-center gap-2 cursor-pointer transition-all active:scale-[0.98]"
-          >
-            <span className="text-sm">📲</span>
-            <span>{t('pwa', 'installApp')}</span>
           </button>
         )}
       </div>

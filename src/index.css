@@ -47,3 +47,38 @@
   -webkit-user-select: none;
 }
 
+/* Route loading pulsing animation */
+@keyframes routePulse {
+  0%, 100% {
+    opacity: 0.25;
+  }
+  50% {
+    opacity: 0.65;
+  }
+}
+
+.route-line-loading {
+  animation: routePulse 1.4s ease-in-out infinite;
+  stroke-linecap: round;
+}
+
+/* Route fade-in transition */
+@keyframes routeFadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.route-line-fadeIn {
+  animation: routeFadeIn 0.35s ease-out forwards;
+}
+
+/* Custom Marker Cluster Styling */
+.custom-passenger-cluster-icon {
+  background: transparent !important;
+  border: none !important;
+}
+

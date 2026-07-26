@@ -2,6 +2,9 @@ import React, { useState, useEffect, useRef } from 'react';
 import { ChevronDown } from 'lucide-react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
+import 'leaflet.markercluster';
+import 'leaflet.markercluster/dist/MarkerCluster.css';
+import 'leaflet.markercluster/dist/MarkerCluster.Default.css';
 import {
   supabase,
   isSupabaseConfigured,
@@ -17,7 +20,6 @@ import {
   isStandaloneApp,
 } from '../lib/notifications';
 import { t, useLanguage } from '../lib/i18n';
-import { triggerPWAInstall, useIsStandalone } from '../lib/pwa';
 import { findOptimizedDriverRoute, OptimizedRoute } from '../lib/routeOptimizer';
 import { fetchORSDirections, formatDuration } from '../lib/ors';
 
@@ -33,13 +35,13 @@ const createRouteStepIcon = (stepNumber: number, type: 'pickup' | 'dropoff') =>
     className: 'custom-route-step-icon',
     html: `
       <div style="
-        background: ${type === 'pickup' ? '#2563eb' : '#059669'};
+        background: ${type === 'pickup' ? '#F57C00' : '#059669'};
         color: #ffffff;
         width: 30px;
         height: 30px;
         border-radius: 50%;
         border: 2.5px solid #ffffff;
-        box-shadow: 0 4px 12px ${type === 'pickup' ? 'rgba(37, 99, 235, 0.6)' : 'rgba(5, 150, 105, 0.6)'};
+        box-shadow: 0 4px 12px ${type === 'pickup' ? 'rgba(245, 124, 0, 0.6)' : 'rgba(5, 150, 105, 0.6)'};
         display: flex;
         align-items: center;
         justify-content: center;
@@ -150,7 +152,6 @@ const createDestinationIcon = () =>
 
 export const DriverView: React.FC = () => {
   const [lang] = useLanguage();
-  const isStandalone = useIsStandalone();
   const [driverLocation, setDriverLocation] = useState<{ lat: number; lng: number }>(DEFAULT_DRIVER_CENTER);
   const [driverUserId, setDriverUserId] = useState<string | null>(null);
 
@@ -178,9 +179,14 @@ export const DriverView: React.FC = () => {
 
   // Route Optimization State
   const [onboardPassengersCount, setOnboardPassengersCount] = useState<number>(0);
-  const [optimizedRoute, setOptimizedRoute] = useState<OptimizedRoute | null>(null);
+  const [optimizedRoute, setOptimizedRoute] = useState<
+    (OptimizedRoute & { orsStatus?: 'loading' | 'success' | 'failed' }) | null
+  >(null);
   const [showRouteOnMap, setShowRouteOnMap] = useState<boolean>(true);
   const [isOptimizerExpanded, setIsOptimizerExpanded] = useState<boolean>(true);
+
+  const orsTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const prevStopsHashRef = useRef<string>('');
 
   // Auto-calculate optimized route when active pins, driver position, or onboard count changes
   useEffect(() => {
@@ -195,35 +201,90 @@ export const DriverView: React.FC = () => {
 
     if (!route || route.stops.length === 0) {
       setOptimizedRoute(null);
+      prevStopsHashRef.current = '';
       return;
     }
 
-    // Set immediate initial route with straight line distance for instant UI feedback
-    setOptimizedRoute(route);
+    const stopsHash = route.stops.map((s) => `${s.id}-${s.type}`).join('|') + `_${onboardPassengersCount}`;
+    const stopsChanged = stopsHash !== prevStopsHashRef.current;
+    prevStopsHashRef.current = stopsHash;
 
-    // Fetch real road navigation route from OpenRouteService
+    const apiKey = import.meta.env.VITE_OPENROUTESERVICE_API_KEY;
+    const hasApiKey = Boolean(apiKey && typeof apiKey === 'string' && apiKey.trim() !== '');
+
+    // Set initial route state without resetting to loading if stops didn't change and we already have a road route
+    setOptimizedRoute((prev) => {
+      if (!stopsChanged && prev && prev.isRoadRoute && prev.roadGeometry && prev.roadGeometry.length > 0) {
+        return {
+          ...route,
+          roadGeometry: prev.roadGeometry,
+          roadDistanceMeters: prev.roadDistanceMeters,
+          roadDurationSeconds: prev.roadDurationSeconds,
+          isRoadRoute: true,
+          orsStatus: 'success',
+        };
+      }
+
+      if (!hasApiKey) {
+        return {
+          ...route,
+          isRoadRoute: false,
+          orsStatus: 'failed',
+        };
+      }
+
+      return {
+        ...route,
+        isRoadRoute: false,
+        orsStatus: 'loading',
+      };
+    });
+
+    if (!hasApiKey) return;
+
     const waypoints = [
       driverLocation,
       ...route.stops.map((s) => ({ lat: s.lat, lng: s.lng })),
     ];
 
-    fetchORSDirections(waypoints).then((orsResult) => {
-      if (isMounted && orsResult && orsResult.geometry.length > 0) {
-        setOptimizedRoute((prev) => {
-          if (!prev) return null;
-          return {
-            ...prev,
-            roadGeometry: orsResult.geometry,
-            roadDistanceMeters: orsResult.distanceMeters,
-            roadDurationSeconds: orsResult.durationSeconds,
-            isRoadRoute: true,
-          };
-        });
-      }
-    });
+    if (orsTimerRef.current) {
+      clearTimeout(orsTimerRef.current);
+    }
+
+    orsTimerRef.current = setTimeout(() => {
+      fetchORSDirections(waypoints).then((orsResult) => {
+        if (isMounted) {
+          if (orsResult && orsResult.geometry && orsResult.geometry.length > 0) {
+            setOptimizedRoute((prev) => {
+              if (!prev) return null;
+              return {
+                ...prev,
+                roadGeometry: orsResult.geometry,
+                roadDistanceMeters: orsResult.distanceMeters,
+                roadDurationSeconds: orsResult.durationSeconds,
+                isRoadRoute: true,
+                orsStatus: 'success',
+              };
+            });
+          } else {
+            setOptimizedRoute((prev) => {
+              if (!prev) return null;
+              return {
+                ...prev,
+                isRoadRoute: false,
+                orsStatus: 'failed',
+              };
+            });
+          }
+        }
+      });
+    }, 250);
 
     return () => {
       isMounted = false;
+      if (orsTimerRef.current) {
+        clearTimeout(orsTimerRef.current);
+      }
     };
   }, [driverLocation, activePassengerPins, onboardPassengersCount, lang]);
 
@@ -548,12 +609,55 @@ export const DriverView: React.FC = () => {
     // 2km Radius Circle indicator
     L.circle([driverLocation.lat, driverLocation.lng], {
       radius: MAX_RADIUS_METERS,
-      color: '#3b82f6',
+      color: '#F57C00',
       weight: 1.5,
       dashArray: '6, 6',
-      fillColor: '#3b82f6',
+      fillColor: '#F57C00',
       fillOpacity: 0.05,
     }).addTo(layerGroupRef.current);
+
+    const isOptimizedRouteVisible = Boolean(showRouteOnMap && optimizedRoute && optimizedRoute.stops.length > 0);
+
+    // Marker cluster group specifically for passenger pickup markers
+    const passengerClusterGroup = L.markerClusterGroup({
+      showCoverageOnHover: false,
+      zoomToBoundsOnClick: true,
+      spiderfyOnMaxZoom: true,
+      maxClusterRadius: 50,
+      iconCreateFunction: (cluster) => {
+        const count = cluster.getChildCount();
+        let size = 36;
+        let fontSize = '13px';
+        if (count >= 100) {
+          size = 44;
+          fontSize = '12px';
+        } else if (count >= 10) {
+          size = 40;
+          fontSize = '13px';
+        }
+
+        return L.divIcon({
+          html: `<div style="
+            background: #F57C00;
+            color: #ffffff;
+            width: ${size}px;
+            height: ${size}px;
+            border-radius: 50%;
+            border: 3px solid #ffffff;
+            box-shadow: 0 4px 12px rgba(245, 124, 0, 0.5);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 800;
+            font-size: ${fontSize};
+            font-family: system-ui, -apple-system, sans-serif;
+          ">${count}</div>`,
+          className: 'custom-passenger-cluster-icon',
+          iconSize: [size, size],
+          iconAnchor: [size / 2, size / 2],
+        });
+      },
+    });
 
     activePassengerPins.forEach((pin) => {
       const isPresse = pin.haast;
@@ -604,7 +708,7 @@ export const DriverView: React.FC = () => {
             href="${googleNavUrl}"
             target="_blank"
             rel="noopener noreferrer"
-            style="display: flex; align-items: center; justify-content: center; gap: 6px; margin-top: 10px; width: 100%; padding: 8px 12px; background: #2563eb; color: #ffffff; border-radius: 8px; font-size: 12px; font-weight: 700; text-decoration: none; box-shadow: 0 2px 4px rgba(37,99,235,0.3); transition: background 0.2s;"
+            style="display: flex; align-items: center; justify-content: center; gap: 6px; margin-top: 10px; width: 100%; padding: 8px 12px; background: #059669; color: #ffffff; border-radius: 8px; font-size: 12px; font-weight: 700; text-decoration: none; box-shadow: 0 2px 4px rgba(5,150,105,0.3); transition: background 0.2s;"
           >
             <span>🧭</span>
             <span>${t('driver', 'popupNavigate')}</span>
@@ -612,7 +716,7 @@ export const DriverView: React.FC = () => {
         </div>
       `);
 
-      passengerMarker.addTo(layerGroupRef.current!);
+      passengerMarker.addTo(passengerClusterGroup);
 
       if (openPopupPinIdRef.current === pin.id) {
         passengerMarker.openPopup();
@@ -622,18 +726,20 @@ export const DriverView: React.FC = () => {
         const destLat = pin.bestemming_lat;
         const destLng = pin.bestemming_lng;
 
-        L.polyline(
-          [
-            [pickupLat, pickupLng],
-            [destLat, destLng],
-          ],
-          {
-            color: isPresse ? '#ef4444' : '#F57C00',
-            weight: 2.5,
-            dashArray: '5, 5',
-            opacity: 0.85,
-          }
-        ).addTo(layerGroupRef.current!);
+        if (!isOptimizedRouteVisible) {
+          L.polyline(
+            [
+              [pickupLat, pickupLng],
+              [destLat, destLng],
+            ],
+            {
+              color: isPresse ? '#ef4444' : '#F57C00',
+              weight: 2.5,
+              dashArray: '5, 5',
+              opacity: 0.85,
+            }
+          ).addTo(layerGroupRef.current!);
+        }
 
         const destMarker = L.marker([destLat, destLng], {
           icon: createDestinationIcon(),
@@ -647,30 +753,66 @@ export const DriverView: React.FC = () => {
       }
     });
 
+    passengerClusterGroup.addTo(layerGroupRef.current!);
+
     // Render Optimized Multi-Stop Route Overlay
     if (showRouteOnMap && optimizedRoute && optimizedRoute.stops.length > 0) {
-      const routePoints: [number, number][] =
-        optimizedRoute.isRoadRoute && optimizedRoute.roadGeometry && optimizedRoute.roadGeometry.length > 0
-          ? optimizedRoute.roadGeometry
-          : [
-              [driverLocation.lat, driverLocation.lng],
-              ...optimizedRoute.stops.map((s) => [s.lat, s.lng] as [number, number]),
-            ];
+      const straightLinePoints: [number, number][] = [
+        [driverLocation.lat, driverLocation.lng],
+        ...optimizedRoute.stops.map((s) => [s.lat, s.lng] as [number, number]),
+      ];
 
-      // Route glow effect
-      L.polyline(routePoints, {
-        color: '#2563eb',
-        weight: 8,
-        opacity: 0.35,
-      }).addTo(layerGroupRef.current!);
+      const isRoadReady =
+        optimizedRoute.isRoadRoute &&
+        optimizedRoute.roadGeometry &&
+        optimizedRoute.roadGeometry.length > 0;
 
-      // Solid animated dash route line
-      L.polyline(routePoints, {
-        color: '#1d4ed8',
-        weight: 4,
-        dashArray: '8, 8',
-        opacity: 0.95,
-      }).addTo(layerGroupRef.current!);
+      const isOrsLoading = optimizedRoute.orsStatus === 'loading';
+
+      if (isRoadReady) {
+        // STATE B: Real road route loaded (smooth fade-in transition)
+        const roadPoints = optimizedRoute.roadGeometry!;
+
+        // Route glow effect
+        L.polyline(roadPoints, {
+          color: '#F57C00',
+          weight: 8,
+          opacity: 0.35,
+          className: 'route-line-fadeIn',
+        }).addTo(layerGroupRef.current!);
+
+        // Solid animated dash route line
+        L.polyline(roadPoints, {
+          color: '#E65100',
+          weight: 4,
+          dashArray: '8, 8',
+          opacity: 0.95,
+          className: 'route-line-fadeIn',
+        }).addTo(layerGroupRef.current!);
+      } else if (isOrsLoading) {
+        // STATE A: ORS request in flight -> subtle, faint, gently pulsing placeholder line
+        L.polyline(straightLinePoints, {
+          color: '#F57C00',
+          weight: 3.5,
+          opacity: 0.35,
+          dashArray: '6, 10',
+          className: 'route-line-loading',
+        }).addTo(layerGroupRef.current!);
+      } else {
+        // STATE C: Fallback when ORS fails or returns empty -> solid straight-line route
+        L.polyline(straightLinePoints, {
+          color: '#F57C00',
+          weight: 8,
+          opacity: 0.35,
+        }).addTo(layerGroupRef.current!);
+
+        L.polyline(straightLinePoints, {
+          color: '#E65100',
+          weight: 4,
+          dashArray: '8, 8',
+          opacity: 0.95,
+        }).addTo(layerGroupRef.current!);
+      }
 
       // Step markers
       optimizedRoute.stops.forEach((stop) => {
@@ -852,38 +994,40 @@ export const DriverView: React.FC = () => {
           <button
             type="button"
             onClick={() => setIsOptimizerExpanded(!isOptimizerExpanded)}
-            className="w-full flex items-center justify-between text-start cursor-pointer group"
+            className="w-full flex items-start justify-between text-start cursor-pointer group gap-3"
           >
-            <div className="flex items-center gap-2.5">
-              <div className="w-8 h-8 rounded-xl bg-orange-100 border border-orange-200 flex items-center justify-center text-sm font-bold text-orange-600 shrink-0">
+            <div className="flex items-start gap-3 flex-1 min-w-0">
+              <div className="w-9 h-9 rounded-xl bg-orange-100 border border-orange-200 flex items-center justify-center text-sm font-bold text-orange-600 shrink-0 mt-0.5">
                 ⚡
               </div>
-              <div>
-                <h4 className="font-bold text-xs text-slate-900 flex items-center gap-2">
-                  <span>{t('driver', 'routeOptimizerTitle')}</span>
+              <div className="flex-1 min-w-0 space-y-1">
+                <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1 pe-1">
+                  <h4 className="font-extrabold text-xs text-slate-900 leading-snug">
+                    {t('driver', 'routeOptimizerTitle')}
+                  </h4>
                   {optimizedRoute && (
-                    <span className="bg-orange-100 text-orange-700 border border-orange-200 text-[10px] px-2 py-0.5 rounded-full font-bold">
+                    <span className="inline-flex items-center bg-orange-100 text-orange-700 border border-orange-200 text-[10px] px-2 py-0.5 rounded-full font-extrabold whitespace-nowrap shrink-0">
                       {optimizedRoute.passengers.length} {optimizedRoute.passengers.length === 1 ? t('driver', 'match') : t('driver', 'matches')}
                     </span>
                   )}
-                </h4>
-                <p className="text-[10px] text-slate-500 leading-tight">
+                </div>
+                <p className="text-[11px] text-slate-500 leading-relaxed">
                   {t('driver', 'routeOptimizerDesc')}
                 </p>
               </div>
             </div>
             <ChevronDown
-              className={`w-4 h-4 text-slate-400 transition-transform duration-200 ${
+              className={`w-4 h-4 text-slate-400 transition-transform duration-200 shrink-0 mt-1 ${
                 isOptimizerExpanded ? 'rotate-180' : ''
               }`}
             />
           </button>
 
           {isOptimizerExpanded && (
-            <div className="space-y-3 pt-2 border-t border-slate-200/80 text-xs">
+            <div className="space-y-4 pt-3.5 mt-1 border-t border-slate-200/80 text-xs">
               {/* Onboard Passenger Counter */}
               <div>
-                <label className="block text-[11px] font-semibold text-slate-700 mb-1.5">
+                <label className="block text-[11px] font-bold text-slate-700 mb-2">
                   {t('driver', 'onboardPassengers')}
                 </label>
                 <div className="grid grid-cols-4 gap-1.5">
@@ -990,11 +1134,7 @@ export const DriverView: React.FC = () => {
                     <button
                       type="button"
                       onClick={() => setShowRouteOnMap(!showRouteOnMap)}
-                      className={`w-full py-2 px-3 rounded-xl font-extrabold text-[11px] border transition-all flex items-center justify-center gap-1.5 ${
-                        showRouteOnMap
-                          ? 'bg-orange-500 text-white border-orange-600 shadow-md shadow-orange-500/20'
-                          : 'bg-slate-100 text-slate-700 border-slate-200 hover:bg-slate-200'
-                      }`}
+                      className="w-full py-2 px-3 rounded-xl font-semibold text-[11px] bg-slate-100 text-slate-700 border border-slate-200 hover:bg-slate-200 transition-all flex items-center justify-center gap-1.5"
                     >
                       <span>🗺️</span>
                       <span>
@@ -1013,18 +1153,6 @@ export const DriverView: React.FC = () => {
             </div>
           )}
         </div>
-
-        {/* Optional Install Button for drivers */}
-        {!isStandalone && (
-          <button
-            type="button"
-            onClick={triggerPWAInstall}
-            className="w-full py-2.5 px-4 bg-amber-500/10 hover:bg-amber-500/20 active:bg-amber-500/25 text-[#D97706] font-extrabold text-xs rounded-2xl border border-amber-500/30 flex items-center justify-center gap-2 cursor-pointer transition-all active:scale-[0.98]"
-          >
-            <span className="text-sm">📲</span>
-            <span>{t('pwa', 'installApp')}</span>
-          </button>
-        )}
 
         <button
           type="button"
