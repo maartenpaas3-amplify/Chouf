@@ -848,26 +848,26 @@ export const DriverView: React.FC = () => {
         </div>
 
         {/* ⚡ Route Optimization Feature Section */}
-        <div className="bg-slate-900 text-white rounded-2xl p-4 shadow-lg border border-slate-800 space-y-3">
+        <div className="bg-slate-50 text-slate-800 rounded-2xl p-4 shadow-sm border border-slate-200/80 space-y-3">
           <button
             type="button"
             onClick={() => setIsOptimizerExpanded(!isOptimizerExpanded)}
             className="w-full flex items-center justify-between text-start cursor-pointer group"
           >
             <div className="flex items-center gap-2.5">
-              <div className="w-8 h-8 rounded-xl bg-blue-600/30 border border-blue-500/50 flex items-center justify-center text-sm font-bold text-blue-400 shrink-0">
+              <div className="w-8 h-8 rounded-xl bg-orange-100 border border-orange-200 flex items-center justify-center text-sm font-bold text-orange-600 shrink-0">
                 ⚡
               </div>
               <div>
-                <h4 className="font-bold text-xs text-white flex items-center gap-2">
+                <h4 className="font-bold text-xs text-slate-900 flex items-center gap-2">
                   <span>{t('driver', 'routeOptimizerTitle')}</span>
                   {optimizedRoute && (
-                    <span className="bg-blue-500/20 text-blue-300 border border-blue-500/30 text-[10px] px-2 py-0.5 rounded-full font-bold">
+                    <span className="bg-orange-100 text-orange-700 border border-orange-200 text-[10px] px-2 py-0.5 rounded-full font-bold">
                       {optimizedRoute.passengers.length} {optimizedRoute.passengers.length === 1 ? t('driver', 'match') : t('driver', 'matches')}
                     </span>
                   )}
                 </h4>
-                <p className="text-[10px] text-slate-400 leading-tight">
+                <p className="text-[10px] text-slate-500 leading-tight">
                   {t('driver', 'routeOptimizerDesc')}
                 </p>
               </div>
@@ -880,10 +880,10 @@ export const DriverView: React.FC = () => {
           </button>
 
           {isOptimizerExpanded && (
-            <div className="space-y-3 pt-2 border-t border-slate-800 text-xs">
+            <div className="space-y-3 pt-2 border-t border-slate-200/80 text-xs">
               {/* Onboard Passenger Counter */}
               <div>
-                <label className="block text-[11px] font-semibold text-slate-300 mb-1.5">
+                <label className="block text-[11px] font-semibold text-slate-700 mb-1.5">
                   {t('driver', 'onboardPassengers')}
                 </label>
                 <div className="grid grid-cols-4 gap-1.5">
@@ -899,8 +899,8 @@ export const DriverView: React.FC = () => {
                           isSelected
                             ? isFull
                               ? 'bg-rose-600 text-white border-rose-500 ring-2 ring-rose-500/30 shadow-md'
-                              : 'bg-blue-600 text-white border-blue-500 ring-2 ring-blue-500/30 shadow-md'
-                            : 'bg-slate-800/80 hover:bg-slate-800 text-slate-300 border-slate-700/80'
+                              : 'bg-orange-500 text-white border-orange-600 ring-2 ring-orange-500/30 shadow-md'
+                            : 'bg-white hover:bg-slate-100 text-slate-700 border-slate-200 shadow-sm'
                         }`}
                       >
                         <span className="text-xs">
@@ -919,23 +919,23 @@ export const DriverView: React.FC = () => {
 
               {/* Optimization Results */}
               {onboardPassengersCount === 3 ? (
-                <div className="p-3 bg-slate-800/60 rounded-xl border border-slate-700/60 text-center text-slate-300 text-[11px]">
+                <div className="p-3 bg-slate-100 rounded-xl border border-slate-200 text-center text-slate-600 text-[11px]">
                   <span>🚖 {t('driver', 'taxiFull')}</span>
                 </div>
               ) : optimizedRoute ? (
-                <div className="bg-slate-800/90 rounded-xl p-3 border border-slate-700/80 space-y-2.5">
+                <div className="bg-white rounded-xl p-3 border border-slate-200 shadow-sm space-y-2.5">
                   <div className="flex items-center justify-between text-[11px] gap-2">
-                    <span className="font-semibold text-blue-300 flex items-center gap-1.5">
-                      <span className="w-2 h-2 rounded-full bg-blue-400 animate-pulse shrink-0" />
+                    <span className="font-semibold text-orange-700 flex items-center gap-1.5">
+                      <span className="w-2 h-2 rounded-full bg-orange-500 animate-pulse shrink-0" />
                       <span>{optimizedRoute.explanation}</span>
                     </span>
                     <div className="flex items-center gap-1.5 shrink-0">
                       {optimizedRoute.isRoadRoute && optimizedRoute.roadDurationSeconds ? (
-                        <span className="text-[10px] text-emerald-300 bg-emerald-950/80 px-2 py-0.5 rounded-md border border-emerald-700/80 font-bold flex items-center gap-1">
+                        <span className="text-[10px] text-emerald-800 bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-200 font-bold flex items-center gap-1">
                           <span>⏱️ {formatDuration(optimizedRoute.roadDurationSeconds, lang)}</span>
                         </span>
                       ) : null}
-                      <span className="text-[10px] text-slate-300 bg-slate-900/80 px-2 py-0.5 rounded-md border border-slate-700 font-medium">
+                      <span className="text-[10px] text-slate-700 bg-slate-100 px-2 py-0.5 rounded-md border border-slate-200 font-medium">
                         {optimizedRoute.isRoadRoute && optimizedRoute.roadDistanceMeters
                           ? `${(optimizedRoute.roadDistanceMeters / 1000).toFixed(1)} km 🛣️`
                           : `${(optimizedRoute.totalDistanceMeters / 1000).toFixed(1)} km 📏`}
@@ -963,11 +963,11 @@ export const DriverView: React.FC = () => {
                     {optimizedRoute.stops.map((stop) => (
                       <div
                         key={stop.id}
-                        className="flex items-center gap-2 bg-slate-900/60 p-2 rounded-lg border border-slate-700/50 text-[11px]"
+                        className="flex items-center gap-2 bg-slate-50 p-2 rounded-lg border border-slate-200/80 text-[11px]"
                       >
                         <span
                           className={`w-5 h-5 rounded-full flex items-center justify-center font-extrabold text-[10px] shrink-0 text-white ${
-                            stop.type === 'pickup' ? 'bg-blue-600' : 'bg-emerald-600'
+                            stop.type === 'pickup' ? 'bg-orange-500' : 'bg-emerald-600'
                           }`}
                         >
                           {stop.stepNumber}
@@ -976,10 +976,10 @@ export const DriverView: React.FC = () => {
                           {stop.type === 'pickup' ? '📍' : '🏁'}
                         </span>
                         <div className="flex-1 truncate">
-                          <span className="font-semibold text-slate-200">
+                          <span className="font-semibold text-slate-800">
                             {stop.type === 'pickup' ? t('driver', 'pickupStep') : t('driver', 'dropoffStep')}:
                           </span>{' '}
-                          <span className="text-slate-300 font-medium">{stop.name}</span>
+                          <span className="text-slate-600 font-medium">{stop.name}</span>
                         </div>
                       </div>
                     ))}
@@ -992,8 +992,8 @@ export const DriverView: React.FC = () => {
                       onClick={() => setShowRouteOnMap(!showRouteOnMap)}
                       className={`w-full py-2 px-3 rounded-xl font-extrabold text-[11px] border transition-all flex items-center justify-center gap-1.5 ${
                         showRouteOnMap
-                          ? 'bg-blue-600 text-white border-blue-500 shadow-md shadow-blue-600/30'
-                          : 'bg-slate-700 text-slate-200 border-slate-600 hover:bg-slate-600'
+                          ? 'bg-orange-500 text-white border-orange-600 shadow-md shadow-orange-500/20'
+                          : 'bg-slate-100 text-slate-700 border-slate-200 hover:bg-slate-200'
                       }`}
                     >
                       <span>🗺️</span>
@@ -1006,7 +1006,7 @@ export const DriverView: React.FC = () => {
                   </div>
                 </div>
               ) : (
-                <div className="p-3 bg-slate-800/60 rounded-xl border border-slate-700/60 text-center text-slate-400 text-[11px]">
+                <div className="p-3 bg-slate-100 rounded-xl border border-slate-200 text-center text-slate-500 text-[11px]">
                   <span>{t('driver', 'noOptimizedRoute')}</span>
                 </div>
               )}
