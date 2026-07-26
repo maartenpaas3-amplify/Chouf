@@ -942,6 +942,21 @@ export const DriverView: React.FC = () => {
 
                   {/* Step Sequence List */}
                   <div className="space-y-1.5 pt-1">
+                    {/* Prominent Navigation Button at Top */}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (!optimizedRoute || !optimizedRoute.stops || optimizedRoute.stops.length === 0) return;
+                        console.log('[NAV] Opening Google Maps route:', optimizedRoute.googleMapsUrl);
+                        window.open(optimizedRoute.googleMapsUrl, '_blank', 'noopener,noreferrer');
+                      }}
+                      disabled={!optimizedRoute || !optimizedRoute.stops || optimizedRoute.stops.length === 0}
+                      className="w-full py-2.5 px-3 bg-emerald-600 hover:bg-emerald-500 active:bg-emerald-700 disabled:opacity-50 text-white font-extrabold text-xs rounded-xl border border-emerald-500 flex items-center justify-center gap-2 shadow-md shadow-emerald-600/30 cursor-pointer disabled:cursor-not-allowed transition-all"
+                    >
+                      <span className="text-sm">🧭</span>
+                      <span>{t('driver', 'navWithGoogleMaps')}</span>
+                    </button>
+
                     {optimizedRoute.stops.map((stop) => (
                       <div
                         key={stop.id}
@@ -967,12 +982,12 @@ export const DriverView: React.FC = () => {
                     ))}
                   </div>
 
-                  {/* Map and Navigation Buttons */}
-                  <div className="pt-1 flex flex-col sm:flex-row gap-2">
+                  {/* Map Toggle Button */}
+                  <div className="pt-0.5">
                     <button
                       type="button"
                       onClick={() => setShowRouteOnMap(!showRouteOnMap)}
-                      className={`flex-1 py-2 px-3 rounded-xl font-extrabold text-[11px] border transition-all flex items-center justify-center gap-1.5 ${
+                      className={`w-full py-2 px-3 rounded-xl font-extrabold text-[11px] border transition-all flex items-center justify-center gap-1.5 ${
                         showRouteOnMap
                           ? 'bg-blue-600 text-white border-blue-500 shadow-md shadow-blue-600/30'
                           : 'bg-slate-700 text-slate-200 border-slate-600 hover:bg-slate-600'
@@ -984,20 +999,6 @@ export const DriverView: React.FC = () => {
                           ? t('driver', 'hideRouteOnMap')
                           : t('driver', 'showRouteOnMap')}
                       </span>
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={() => {
-                        if (!optimizedRoute || !optimizedRoute.stops || optimizedRoute.stops.length === 0) return;
-                        console.log('[NAV] Opening Google Maps route:', optimizedRoute.googleMapsUrl);
-                        window.open(optimizedRoute.googleMapsUrl, '_blank', 'noopener,noreferrer');
-                      }}
-                      disabled={!optimizedRoute || !optimizedRoute.stops || optimizedRoute.stops.length === 0}
-                      className="flex-1 py-2 px-3 bg-emerald-600 hover:bg-emerald-500 active:bg-emerald-700 disabled:opacity-50 text-white font-extrabold text-[11px] rounded-xl border border-emerald-500 flex items-center justify-center gap-1.5 transition-all shadow-md shadow-emerald-600/30 cursor-pointer disabled:cursor-not-allowed"
-                    >
-                      <span>🧭</span>
-                      <span>{t('driver', 'navWithGoogleMaps')}</span>
                     </button>
                   </div>
                 </div>
