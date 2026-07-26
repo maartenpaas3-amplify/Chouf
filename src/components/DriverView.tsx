@@ -18,12 +18,41 @@ import {
 } from '../lib/notifications';
 import { t, useLanguage } from '../lib/i18n';
 import { triggerPWAInstall, useIsStandalone } from '../lib/pwa';
+import { findOptimizedDriverRoute, OptimizedRoute } from '../lib/routeOptimizer';
+import { fetchORSDirections, formatDuration } from '../lib/ors';
 
 const DEFAULT_DRIVER_CENTER = { lat: 34.015, lng: -6.832 }; // Rabat center for driver
 
 // 15 minutes expiration threshold & 2km radius
 const FIFTEEN_MINUTES_MS = 15 * 60 * 1000;
 const MAX_RADIUS_METERS = 2000; // 2km radius
+
+// Custom Leaflet Step Marker Icon for Route Optimization
+const createRouteStepIcon = (stepNumber: number, type: 'pickup' | 'dropoff') =>
+  L.divIcon({
+    className: 'custom-route-step-icon',
+    html: `
+      <div style="
+        background: ${type === 'pickup' ? '#2563eb' : '#059669'};
+        color: #ffffff;
+        width: 30px;
+        height: 30px;
+        border-radius: 50%;
+        border: 2.5px solid #ffffff;
+        box-shadow: 0 4px 12px ${type === 'pickup' ? 'rgba(37, 99, 235, 0.6)' : 'rgba(5, 150, 105, 0.6)'};
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 13px;
+        font-weight: 800;
+        font-family: sans-serif;
+      ">
+        ${stepNumber}
+      </div>
+    `,
+    iconSize: [30, 30],
+    iconAnchor: [15, 15],
+  });
 
 // Custom Leaflet Icons
 const createDriverMarkerIcon = () =>
@@ -120,7 +149,7 @@ const createDestinationIcon = () =>
   });
 
 export const DriverView: React.FC = () => {
-  useLanguage();
+  const [lang] = useLanguage();
   const isStandalone = useIsStandalone();
   const [driverLocation, setDriverLocation] = useState<{ lat: number; lng: number }>(DEFAULT_DRIVER_CENTER);
   const [driverUserId, setDriverUserId] = useState<string | null>(null);
@@ -146,6 +175,57 @@ export const DriverView: React.FC = () => {
   const [activePassengerPins, setActivePassengerPins] = useState<SupabasePin[]>([]);
   const [supabaseConnected, setSupabaseConnected] = useState<boolean>(isSupabaseConfigured());
   const [isLegendOpen, setIsLegendOpen] = useState<boolean>(false);
+
+  // Route Optimization State
+  const [onboardPassengersCount, setOnboardPassengersCount] = useState<number>(0);
+  const [optimizedRoute, setOptimizedRoute] = useState<OptimizedRoute | null>(null);
+  const [showRouteOnMap, setShowRouteOnMap] = useState<boolean>(true);
+  const [isOptimizerExpanded, setIsOptimizerExpanded] = useState<boolean>(true);
+
+  // Auto-calculate optimized route when active pins, driver position, or onboard count changes
+  useEffect(() => {
+    let isMounted = true;
+
+    const route = findOptimizedDriverRoute(
+      driverLocation,
+      activePassengerPins,
+      onboardPassengersCount,
+      lang
+    );
+
+    if (!route || route.stops.length === 0) {
+      setOptimizedRoute(null);
+      return;
+    }
+
+    // Set immediate initial route with straight line distance for instant UI feedback
+    setOptimizedRoute(route);
+
+    // Fetch real road navigation route from OpenRouteService
+    const waypoints = [
+      driverLocation,
+      ...route.stops.map((s) => ({ lat: s.lat, lng: s.lng })),
+    ];
+
+    fetchORSDirections(waypoints).then((orsResult) => {
+      if (isMounted && orsResult && orsResult.geometry.length > 0) {
+        setOptimizedRoute((prev) => {
+          if (!prev) return null;
+          return {
+            ...prev,
+            roadGeometry: orsResult.geometry,
+            roadDistanceMeters: orsResult.distanceMeters,
+            roadDurationSeconds: orsResult.durationSeconds,
+            isRoadRoute: true,
+          };
+        });
+      }
+    });
+
+    return () => {
+      isMounted = false;
+    };
+  }, [driverLocation, activePassengerPins, onboardPassengersCount, lang]);
 
   // Notification States
   const [notifPermission, setNotifPermission] = useState<NotificationPermission | 'unsupported'>(
@@ -567,8 +647,54 @@ export const DriverView: React.FC = () => {
       }
     });
 
+    // Render Optimized Multi-Stop Route Overlay
+    if (showRouteOnMap && optimizedRoute && optimizedRoute.stops.length > 0) {
+      const routePoints: [number, number][] =
+        optimizedRoute.isRoadRoute && optimizedRoute.roadGeometry && optimizedRoute.roadGeometry.length > 0
+          ? optimizedRoute.roadGeometry
+          : [
+              [driverLocation.lat, driverLocation.lng],
+              ...optimizedRoute.stops.map((s) => [s.lat, s.lng] as [number, number]),
+            ];
+
+      // Route glow effect
+      L.polyline(routePoints, {
+        color: '#2563eb',
+        weight: 8,
+        opacity: 0.35,
+      }).addTo(layerGroupRef.current!);
+
+      // Solid animated dash route line
+      L.polyline(routePoints, {
+        color: '#1d4ed8',
+        weight: 4,
+        dashArray: '8, 8',
+        opacity: 0.95,
+      }).addTo(layerGroupRef.current!);
+
+      // Step markers
+      optimizedRoute.stops.forEach((stop) => {
+        const stepMarker = L.marker([stop.lat, stop.lng], {
+          icon: createRouteStepIcon(stop.stepNumber, stop.type),
+          zIndexOffset: 2000,
+        });
+
+        const typeLabel = stop.type === 'pickup' ? `📍 ${t('driver', 'pickupStep')}` : `🏁 ${t('driver', 'dropoffStep')}`;
+        stepMarker.bindPopup(`
+          <div style="font-family: sans-serif; padding: 2px;">
+            <div style="font-size: 10px; font-weight: 800; color: ${stop.type === 'pickup' ? '#60a5fa' : '#34d399'}; margin-bottom: 2px;">
+              ${t('driver', 'routeProposed')} • ${t('driver', 'stepLabel')} ${stop.stepNumber} (${typeLabel})
+            </div>
+            <strong style="font-size: 12px; color: #ffffff;">${stop.name}</strong>
+          </div>
+        `);
+
+        stepMarker.addTo(layerGroupRef.current!);
+      });
+    }
+
     isClearingLayersRef.current = false;
-  }, [activePassengerPins, driverLocation]);
+  }, [activePassengerPins, driverLocation, showRouteOnMap, optimizedRoute]);
 
   return (
     <div className="relative w-full h-full flex flex-col bg-slate-100 text-slate-900 overflow-hidden font-sans">
@@ -714,6 +840,168 @@ export const DriverView: React.FC = () => {
             <div className="p-2.5 bg-slate-50 border border-slate-200/80 rounded-2xl text-[10px] text-slate-500 flex items-center gap-2 font-medium leading-tight">
               <span className="text-slate-400 text-xs shrink-0">⚠️</span>
               <span>{t('driver', 'notificationsBlocked')}</span>
+            </div>
+          )}
+        </div>
+
+        {/* ⚡ Route Optimization Feature Section */}
+        <div className="bg-slate-900 text-white rounded-2xl p-4 shadow-lg border border-slate-800 space-y-3">
+          <button
+            type="button"
+            onClick={() => setIsOptimizerExpanded(!isOptimizerExpanded)}
+            className="w-full flex items-center justify-between text-start cursor-pointer group"
+          >
+            <div className="flex items-center gap-2.5">
+              <div className="w-8 h-8 rounded-xl bg-blue-600/30 border border-blue-500/50 flex items-center justify-center text-sm font-bold text-blue-400 shrink-0">
+                ⚡
+              </div>
+              <div>
+                <h4 className="font-bold text-xs text-white flex items-center gap-2">
+                  <span>{t('driver', 'routeOptimizerTitle')}</span>
+                  {optimizedRoute && (
+                    <span className="bg-blue-500/20 text-blue-300 border border-blue-500/30 text-[10px] px-2 py-0.5 rounded-full font-bold">
+                      {optimizedRoute.passengers.length} {optimizedRoute.passengers.length === 1 ? t('driver', 'match') : t('driver', 'matches')}
+                    </span>
+                  )}
+                </h4>
+                <p className="text-[10px] text-slate-400 leading-tight">
+                  {t('driver', 'routeOptimizerDesc')}
+                </p>
+              </div>
+            </div>
+            <ChevronDown
+              className={`w-4 h-4 text-slate-400 transition-transform duration-200 ${
+                isOptimizerExpanded ? 'rotate-180' : ''
+              }`}
+            />
+          </button>
+
+          {isOptimizerExpanded && (
+            <div className="space-y-3 pt-2 border-t border-slate-800 text-xs">
+              {/* Onboard Passenger Counter */}
+              <div>
+                <label className="block text-[11px] font-semibold text-slate-300 mb-1.5">
+                  {t('driver', 'onboardPassengers')}
+                </label>
+                <div className="grid grid-cols-4 gap-1.5">
+                  {[0, 1, 2, 3].map((num) => {
+                    const isSelected = onboardPassengersCount === num;
+                    const isFull = num === 3;
+                    return (
+                      <button
+                        key={num}
+                        type="button"
+                        onClick={() => setOnboardPassengersCount(num)}
+                        className={`py-2 px-1 rounded-xl font-bold text-[11px] border transition-all text-center flex flex-col items-center justify-center gap-0.5 ${
+                          isSelected
+                            ? isFull
+                              ? 'bg-rose-600 text-white border-rose-500 ring-2 ring-rose-500/30 shadow-md'
+                              : 'bg-blue-600 text-white border-blue-500 ring-2 ring-blue-500/30 shadow-md'
+                            : 'bg-slate-800/80 hover:bg-slate-800 text-slate-300 border-slate-700/80'
+                        }`}
+                      >
+                        <span className="text-xs">
+                          {num === 0 ? '🚖 0' : isFull ? '🈵 3/3' : `👥 ${num}`}
+                        </span>
+                        <span className="text-[9px] opacity-80 font-medium">
+                          {isFull
+                            ? t('driver', 'taxiFullShort')
+                            : `${3 - num} ${3 - num === 1 ? t('driver', 'seat') : t('driver', 'seats')}`}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Optimization Results */}
+              {onboardPassengersCount === 3 ? (
+                <div className="p-3 bg-slate-800/60 rounded-xl border border-slate-700/60 text-center text-slate-300 text-[11px]">
+                  <span>🚖 {t('driver', 'taxiFull')}</span>
+                </div>
+              ) : optimizedRoute ? (
+                <div className="bg-slate-800/90 rounded-xl p-3 border border-slate-700/80 space-y-2.5">
+                  <div className="flex items-center justify-between text-[11px] gap-2">
+                    <span className="font-semibold text-blue-300 flex items-center gap-1.5">
+                      <span className="w-2 h-2 rounded-full bg-blue-400 animate-pulse shrink-0" />
+                      <span>{optimizedRoute.explanation}</span>
+                    </span>
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      {optimizedRoute.isRoadRoute && optimizedRoute.roadDurationSeconds ? (
+                        <span className="text-[10px] text-emerald-300 bg-emerald-950/80 px-2 py-0.5 rounded-md border border-emerald-700/80 font-bold flex items-center gap-1">
+                          <span>⏱️ {formatDuration(optimizedRoute.roadDurationSeconds, lang)}</span>
+                        </span>
+                      ) : null}
+                      <span className="text-[10px] text-slate-300 bg-slate-900/80 px-2 py-0.5 rounded-md border border-slate-700 font-medium">
+                        {optimizedRoute.isRoadRoute && optimizedRoute.roadDistanceMeters
+                          ? `${(optimizedRoute.roadDistanceMeters / 1000).toFixed(1)} km 🛣️`
+                          : `${(optimizedRoute.totalDistanceMeters / 1000).toFixed(1)} km 📏`}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Step Sequence List */}
+                  <div className="space-y-1.5 pt-1">
+                    {optimizedRoute.stops.map((stop) => (
+                      <div
+                        key={stop.id}
+                        className="flex items-center gap-2 bg-slate-900/60 p-2 rounded-lg border border-slate-700/50 text-[11px]"
+                      >
+                        <span
+                          className={`w-5 h-5 rounded-full flex items-center justify-center font-extrabold text-[10px] shrink-0 text-white ${
+                            stop.type === 'pickup' ? 'bg-blue-600' : 'bg-emerald-600'
+                          }`}
+                        >
+                          {stop.stepNumber}
+                        </span>
+                        <span className="text-xs shrink-0">
+                          {stop.type === 'pickup' ? '📍' : '🏁'}
+                        </span>
+                        <div className="flex-1 truncate">
+                          <span className="font-semibold text-slate-200">
+                            {stop.type === 'pickup' ? t('driver', 'pickupStep') : t('driver', 'dropoffStep')}:
+                          </span>{' '}
+                          <span className="text-slate-300 font-medium">{stop.name}</span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* Map and Navigation Buttons */}
+                  <div className="pt-1 flex flex-col sm:flex-row gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setShowRouteOnMap(!showRouteOnMap)}
+                      className={`flex-1 py-2 px-3 rounded-xl font-extrabold text-[11px] border transition-all flex items-center justify-center gap-1.5 ${
+                        showRouteOnMap
+                          ? 'bg-blue-600 text-white border-blue-500 shadow-md shadow-blue-600/30'
+                          : 'bg-slate-700 text-slate-200 border-slate-600 hover:bg-slate-600'
+                      }`}
+                    >
+                      <span>🗺️</span>
+                      <span>
+                        {showRouteOnMap
+                          ? t('driver', 'hideRouteOnMap')
+                          : t('driver', 'showRouteOnMap')}
+                      </span>
+                    </button>
+
+                    <a
+                      href={optimizedRoute.googleMapsUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="flex-1 py-2 px-3 bg-emerald-600 hover:bg-emerald-500 text-white font-extrabold text-[11px] rounded-xl border border-emerald-500 flex items-center justify-center gap-1.5 transition-all shadow-md shadow-emerald-600/30 text-decoration-none"
+                    >
+                      <span>🧭</span>
+                      <span>{t('driver', 'startRouteNav')}</span>
+                    </a>
+                  </div>
+                </div>
+              ) : (
+                <div className="p-3 bg-slate-800/60 rounded-xl border border-slate-700/60 text-center text-slate-400 text-[11px]">
+                  <span>{t('driver', 'noOptimizedRoute')}</span>
+                </div>
+              )}
             </div>
           )}
         </div>
