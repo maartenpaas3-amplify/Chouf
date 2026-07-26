@@ -28,25 +28,6 @@ const FIFTEEN_MINUTES_MS = 15 * 60 * 1000;
 const MAX_RADIUS_METERS = 2000; // 2km radius
 
 // Custom Leaflet Step Marker Icon for Route Optimization
-const buildGoogleMapsNavUrl = (
-  origin: { lat: number; lng: number },
-  stops: { lat: number; lng: number }[]
-): string => {
-  if (!stops || stops.length === 0) return '';
-  const originStr = `${origin.lat},${origin.lng}`;
-  const lastStop = stops[stops.length - 1];
-  const destStr = `${lastStop.lat},${lastStop.lng}`;
-
-  if (stops.length > 1) {
-    const waypoints = stops
-      .slice(0, stops.length - 1)
-      .map((st) => `${st.lat},${st.lng}`)
-      .join('|');
-    return `https://www.google.com/maps/dir/?api=1&origin=${originStr}&destination=${destStr}&waypoints=${waypoints}&travelmode=driving`;
-  }
-  return `https://www.google.com/maps/dir/?api=1&origin=${originStr}&destination=${destStr}&travelmode=driving`;
-};
-
 const createRouteStepIcon = (stepNumber: number, type: 'pickup' | 'dropoff') =>
   L.divIcon({
     className: 'custom-route-step-icon',
@@ -1009,11 +990,8 @@ export const DriverView: React.FC = () => {
                       type="button"
                       onClick={() => {
                         if (!optimizedRoute || !optimizedRoute.stops || optimizedRoute.stops.length === 0) return;
-                        const navUrl =
-                          optimizedRoute.googleMapsUrl ||
-                          buildGoogleMapsNavUrl(driverLocation, optimizedRoute.stops);
-                        console.log('[NAV] Opening Google Maps route:', navUrl);
-                        window.open(navUrl, '_blank', 'noopener,noreferrer');
+                        console.log('[NAV] Opening Google Maps route:', optimizedRoute.googleMapsUrl);
+                        window.open(optimizedRoute.googleMapsUrl, '_blank', 'noopener,noreferrer');
                       }}
                       disabled={!optimizedRoute || !optimizedRoute.stops || optimizedRoute.stops.length === 0}
                       className="flex-1 py-2 px-3 bg-emerald-600 hover:bg-emerald-500 active:bg-emerald-700 disabled:opacity-50 text-white font-extrabold text-[11px] rounded-xl border border-emerald-500 flex items-center justify-center gap-1.5 transition-all shadow-md shadow-emerald-600/30 cursor-pointer disabled:cursor-not-allowed"
