@@ -183,7 +183,7 @@ export const DriverView: React.FC = () => {
     (OptimizedRoute & { orsStatus?: 'loading' | 'success' | 'failed' }) | null
   >(null);
   const [showRouteOnMap, setShowRouteOnMap] = useState<boolean>(true);
-  const [isOptimizerExpanded, setIsOptimizerExpanded] = useState<boolean>(true);
+  const [isOptimizerExpanded, setIsOptimizerExpanded] = useState<boolean>(false);
 
   const orsTimerRef = useRef<NodeJS.Timeout | null>(null);
   const prevStopsHashRef = useRef<string>('');
@@ -191,6 +191,15 @@ export const DriverView: React.FC = () => {
   // Auto-calculate optimized route when active pins, driver position, or onboard count changes
   useEffect(() => {
     let isMounted = true;
+
+    if (!isOptimizerExpanded) {
+      setOptimizedRoute(null);
+      prevStopsHashRef.current = '';
+      if (orsTimerRef.current) {
+        clearTimeout(orsTimerRef.current);
+      }
+      return;
+    }
 
     const route = findOptimizedDriverRoute(
       driverLocation,
@@ -286,7 +295,7 @@ export const DriverView: React.FC = () => {
         clearTimeout(orsTimerRef.current);
       }
     };
-  }, [driverLocation, activePassengerPins, onboardPassengersCount, lang]);
+  }, [isOptimizerExpanded, driverLocation, activePassengerPins, onboardPassengersCount, lang]);
 
   // Notification States
   const [notifPermission, setNotifPermission] = useState<NotificationPermission | 'unsupported'>(
@@ -616,8 +625,6 @@ export const DriverView: React.FC = () => {
       fillOpacity: 0.05,
     }).addTo(layerGroupRef.current);
 
-    const isOptimizedRouteVisible = Boolean(showRouteOnMap && optimizedRoute && optimizedRoute.stops.length > 0);
-
     // Marker cluster group specifically for passenger pickup markers
     const passengerClusterGroup = L.markerClusterGroup({
       showCoverageOnHover: false,
@@ -725,21 +732,6 @@ export const DriverView: React.FC = () => {
       if (pin.bestemming_lat && pin.bestemming_lng) {
         const destLat = pin.bestemming_lat;
         const destLng = pin.bestemming_lng;
-
-        if (!isOptimizedRouteVisible) {
-          L.polyline(
-            [
-              [pickupLat, pickupLng],
-              [destLat, destLng],
-            ],
-            {
-              color: isPresse ? '#ef4444' : '#F57C00',
-              weight: 2.5,
-              dashArray: '5, 5',
-              opacity: 0.85,
-            }
-          ).addTo(layerGroupRef.current!);
-        }
 
         const destMarker = L.marker([destLat, destLng], {
           icon: createDestinationIcon(),
@@ -990,34 +982,50 @@ export const DriverView: React.FC = () => {
         </div>
 
         {/* ⚡ Route Optimization Feature Section */}
-        <div className="bg-slate-50 text-slate-800 rounded-2xl p-4 shadow-sm border border-slate-200/80 space-y-3">
+        <div
+          className={`rounded-2xl transition-all shadow-sm border ${
+            isOptimizerExpanded
+              ? 'bg-slate-50 text-slate-800 border-slate-200/80 p-4 space-y-3'
+              : 'bg-white hover:bg-orange-50/50 border-slate-200/90 text-slate-900 p-3.5'
+          }`}
+        >
           <button
             type="button"
             onClick={() => setIsOptimizerExpanded(!isOptimizerExpanded)}
-            className="w-full flex items-start justify-between text-start cursor-pointer group gap-3"
+            className="w-full flex items-center justify-between text-start cursor-pointer group gap-3"
           >
-            <div className="flex items-start gap-3 flex-1 min-w-0">
-              <div className="w-9 h-9 rounded-xl bg-orange-100 border border-orange-200 flex items-center justify-center text-sm font-bold text-orange-600 shrink-0 mt-0.5">
+            <div className="flex items-center gap-3 flex-1 min-w-0">
+              <div
+                className={`w-9 h-9 rounded-xl flex items-center justify-center text-sm font-extrabold shrink-0 transition-all ${
+                  isOptimizerExpanded
+                    ? 'bg-[#F57C00] text-white shadow-md shadow-[#F57C00]/30'
+                    : 'bg-slate-100 border border-slate-200 text-slate-500 group-hover:bg-orange-100 group-hover:text-orange-600 group-hover:border-orange-200'
+                }`}
+              >
                 ⚡
               </div>
-              <div className="flex-1 min-w-0 space-y-1">
+              <div className="flex-1 min-w-0 space-y-0.5">
                 <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1 pe-1">
-                  <h4 className="font-extrabold text-xs text-slate-900 leading-snug">
-                    {t('driver', 'routeOptimizerTitle')}
+                  <h4 className="font-extrabold text-xs text-slate-900 leading-snug flex items-center gap-1.5">
+                    <span>{t('driver', 'routeOptimizerTitle')}</span>
                   </h4>
-                  {optimizedRoute && (
-                    <span className="inline-flex items-center bg-orange-100 text-orange-700 border border-orange-200 text-[10px] px-2 py-0.5 rounded-full font-extrabold whitespace-nowrap shrink-0">
-                      {optimizedRoute.passengers.length} {optimizedRoute.passengers.length === 1 ? t('driver', 'match') : t('driver', 'matches')}
+                  {isOptimizerExpanded ? (
+                    <span className="inline-flex items-center gap-1 bg-[#F57C00] text-white text-[10px] px-2.5 py-0.5 rounded-full font-extrabold whitespace-nowrap shrink-0 shadow-xs">
+                      ON {optimizedRoute && optimizedRoute.passengers.length > 0 ? `· ${optimizedRoute.passengers.length} ${optimizedRoute.passengers.length === 1 ? t('driver', 'match') : t('driver', 'matches')}` : ''}
+                    </span>
+                  ) : (
+                    <span className="inline-flex items-center gap-1 bg-slate-100 text-slate-500 border border-slate-200 text-[10px] px-2.5 py-0.5 rounded-full font-extrabold whitespace-nowrap shrink-0 group-hover:border-orange-300 group-hover:text-orange-600">
+                      OFF
                     </span>
                   )}
                 </div>
-                <p className="text-[11px] text-slate-500 leading-relaxed">
+                <p className="text-[11px] text-slate-500 leading-relaxed truncate">
                   {t('driver', 'routeOptimizerDesc')}
                 </p>
               </div>
             </div>
             <ChevronDown
-              className={`w-4 h-4 text-slate-400 transition-transform duration-200 shrink-0 mt-1 ${
+              className={`w-4 h-4 text-slate-400 group-hover:text-slate-600 transition-transform duration-200 shrink-0 ${
                 isOptimizerExpanded ? 'rotate-180' : ''
               }`}
             />
