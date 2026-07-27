@@ -56,3 +56,24 @@ export interface DriverState {
   location: Location;
   city: string;
 }
+
+export interface CityZone {
+  id: string;
+  name: string;
+  centerLat: number;
+  centerLng: number;
+  city: string;
+}
+
+export interface ActiveTripDestination {
+  zoneId: string;
+  zoneName: string;
+  centerLat: number;
+  centerLng: number;
+  exactLat: number;
+  exactLng: number;
+  isCustomPinSet: boolean;
+  selectedAt: number;
+  hasPassengerOnboard: boolean;
+}
+

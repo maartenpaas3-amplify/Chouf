@@ -19,9 +19,11 @@ import {
   isIosDevice,
   isStandaloneApp,
 } from '../lib/notifications';
-import { t, useLanguage } from '../lib/i18n';
-import { findOptimizedDriverRoute, OptimizedRoute } from '../lib/routeOptimizer';
+import { t, useLanguage, getLocalizedZoneName } from '../lib/i18n';
 import { fetchORSDirections, formatDuration } from '../lib/ors';
+import { CityZone, ActiveTripDestination } from '../types';
+import { getZonesForCity } from '../data/cityZones';
+import { SuperModeCandidate, calculateSuperModeCandidates } from '../lib/superMode';
 
 const DEFAULT_DRIVER_CENTER = { lat: 34.015, lng: -6.832 }; // Rabat center for driver
 
@@ -150,8 +152,173 @@ const createDestinationIcon = () =>
     iconAnchor: [13, 13],
   });
 
+const createActiveDestinationIcon = (isCustom: boolean) =>
+  L.divIcon({
+    className: 'custom-active-dest-icon',
+    html: `
+      <div style="
+        background: #10b981;
+        color: #ffffff;
+        padding: 5px 10px;
+        border-radius: 14px;
+        border: 2.5px solid #ffffff;
+        box-shadow: 0 4px 14px rgba(16, 185, 129, 0.6);
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        font-size: 12px;
+        font-weight: 800;
+        font-family: system-ui, -apple-system, sans-serif;
+        white-space: nowrap;
+        cursor: grab;
+      ">
+        <span>🏁</span>
+        <span>${isCustom ? '📍 Exact' : '🎯 Zone'}</span>
+      </div>
+    `,
+    iconSize: [84, 32],
+    iconAnchor: [42, 16],
+  });
+
 export const DriverView: React.FC = () => {
   const [lang] = useLanguage();
+  const isRTL = lang === 'ar';
+
+  // Active Trip Destination State for 1st Passenger (Super Mode Step 1)
+  const [activeDestination, setActiveDestination] = useState<ActiveTripDestination | null>(() => {
+    try {
+      if (typeof window === 'undefined') return null;
+      const saved = localStorage.getItem('chouf_active_trip_destination');
+      return saved ? JSON.parse(saved) : null;
+    } catch {
+      return null;
+    }
+  });
+
+  const [isZonePickerOpen, setIsZonePickerOpen] = useState<boolean>(false);
+  const driverCity = 'Rabat'; // City independent: configurable per driver city
+  const cityZones = getZonesForCity(driverCity);
+
+  const handleSelectZone = (zone: CityZone) => {
+    const newDest: ActiveTripDestination = {
+      zoneId: zone.id,
+      zoneName: zone.name,
+      centerLat: zone.centerLat,
+      centerLng: zone.centerLng,
+      exactLat: zone.centerLat,
+      exactLng: zone.centerLng,
+      isCustomPinSet: false,
+      selectedAt: Date.now(),
+      hasPassengerOnboard: true,
+    };
+
+    setActiveDestination(newDest);
+    try {
+      localStorage.setItem('chouf_active_trip_destination', JSON.stringify(newDest));
+    } catch (err) {
+      console.warn('localStorage save active destination error:', err);
+    }
+
+    setIsZonePickerOpen(false);
+
+    if (mapRef.current) {
+      mapRef.current.flyTo([zone.centerLat, zone.centerLng], 14, { animate: true });
+    }
+  };
+
+  const handleClearDestination = () => {
+    setActiveDestination(null);
+    setSuperModeCandidates(null);
+    setSelectedCandidateId(null);
+    setLastNotifSentCandidateId(null);
+    try {
+      localStorage.removeItem('chouf_active_trip_destination');
+    } catch (err) {
+      console.warn('localStorage remove active destination error:', err);
+    }
+    setIsZonePickerOpen(false);
+  };
+
+  // Super Mode State (Stand A: 0 passagiers zone-analyse & Stand B: 1 passagier omweg-check)
+  const [isSuperModeActive, setIsSuperModeActive] = useState<boolean>(false);
+  const [isCalculatingSuperMode, setIsCalculatingSuperMode] = useState<boolean>(false);
+  const [superModeCandidates, setSuperModeCandidates] = useState<SuperModeCandidate[] | null>(null);
+  const [selectedCandidateId, setSelectedCandidateId] = useState<string | null>(null);
+  const [lastNotifSentCandidateId, setLastNotifSentCandidateId] = useState<string | null>(null);
+
+  const handleRunSuperModeCheck = async () => {
+    if (!activeDestination) return;
+    setIsCalculatingSuperMode(true);
+    try {
+      const dest1Loc = {
+        lat: activeDestination.exactLat || activeDestination.centerLat,
+        lng: activeDestination.exactLng || activeDestination.centerLng,
+      };
+      const results = await calculateSuperModeCandidates(
+        driverLocation,
+        dest1Loc,
+        activePassengerPins
+      );
+      setSuperModeCandidates(results);
+    } catch (err) {
+      console.warn('[SuperMode] Calculation error:', err);
+      setSuperModeCandidates([]);
+    } finally {
+      setIsCalculatingSuperMode(false);
+    }
+  };
+
+  // Auto-run detour check when switching to Stand B with an active destination
+  useEffect(() => {
+    if (isSuperModeActive && activeDestination) {
+      handleRunSuperModeCheck();
+    } else {
+      setSuperModeCandidates(null);
+      setSelectedCandidateId(null);
+    }
+  }, [activeDestination, isSuperModeActive]);
+
+  const handleSelectSuperModeCandidate = async (cand: SuperModeCandidate) => {
+    setSelectedCandidateId(cand.passenger.id);
+    setLastNotifSentCandidateId(cand.passenger.id);
+
+    if (mapRef.current) {
+      mapRef.current.flyTo([cand.passenger.lat, cand.passenger.lng], 15, { animate: true });
+    }
+
+    // Melding naar passagier 1: "Onderweg wordt nog iemand anders opgepikt, je rit duurt ongeveer +X min langer."
+    const messageBody = t('driver', 'passenger1DetourNotif').replace('{minutes}', cand.detourMinutes.toString());
+
+    try {
+      const success = await sendPassengerAlertNotification(
+        t('driver', 'superModeNotifTitle'),
+        messageBody,
+        `detour-p1-${cand.passenger.id}`
+      );
+
+      if (success) {
+        console.info(`[SuperMode] Notification sent to Passenger 1 (+${cand.detourMinutes} min detour).`);
+      } else {
+        console.info(`[SuperMode] Passenger 1 notification channel unreached/blocked. Driver proceeds without blocking.`);
+      }
+    } catch (err) {
+      console.warn('[SuperMode] Notification attempt log:', err);
+    }
+  };
+
+  const handleToggleSuperMode = () => {
+    if (!isSuperModeActive) {
+      setIsSuperModeActive(true);
+      if (activeDestination) {
+        handleRunSuperModeCheck();
+      }
+    } else {
+      setIsSuperModeActive(false);
+      setSuperModeCandidates(null);
+      setSelectedCandidateId(null);
+      setLastNotifSentCandidateId(null);
+    }
+  };
 
   // Driver Gate Verification State
   const [isVerified, setIsVerified] = useState<boolean>(() => {
@@ -229,125 +396,56 @@ export const DriverView: React.FC = () => {
   const [supabaseConnected, setSupabaseConnected] = useState<boolean>(isSupabaseConfigured());
   const [isLegendOpen, setIsLegendOpen] = useState<boolean>(false);
 
-  // Route Optimization State
-  const [onboardPassengersCount, setOnboardPassengersCount] = useState<number>(0);
-  const [optimizedRoute, setOptimizedRoute] = useState<
-    (OptimizedRoute & { orsStatus?: 'loading' | 'success' | 'failed' }) | null
-  >(null);
-  const [showRouteOnMap, setShowRouteOnMap] = useState<boolean>(true);
-  const [isOptimizerExpanded, setIsOptimizerExpanded] = useState<boolean>(false);
-
-  const orsTimerRef = useRef<NodeJS.Timeout | null>(null);
-  const prevStopsHashRef = useRef<string>('');
-
-  // Auto-calculate optimized route when active pins, driver position, or onboard count changes
-  useEffect(() => {
-    let isMounted = true;
-
-    if (!isOptimizerExpanded) {
-      setOptimizedRoute(null);
-      prevStopsHashRef.current = '';
-      if (orsTimerRef.current) {
-        clearTimeout(orsTimerRef.current);
-      }
-      return;
-    }
-
-    const route = findOptimizedDriverRoute(
-      driverLocation,
-      activePassengerPins,
-      onboardPassengersCount,
-      lang
-    );
-
-    if (!route || route.stops.length === 0) {
-      setOptimizedRoute(null);
-      prevStopsHashRef.current = '';
-      return;
-    }
-
-    const stopsHash = route.stops.map((s) => `${s.id}-${s.type}`).join('|') + `_${onboardPassengersCount}`;
-    const stopsChanged = stopsHash !== prevStopsHashRef.current;
-    prevStopsHashRef.current = stopsHash;
-
-    const apiKey = import.meta.env.VITE_OPENROUTESERVICE_API_KEY;
-    const hasApiKey = Boolean(apiKey && typeof apiKey === 'string' && apiKey.trim() !== '');
-
-    // Set initial route state without resetting to loading if stops didn't change and we already have a road route
-    setOptimizedRoute((prev) => {
-      if (!stopsChanged && prev && prev.isRoadRoute && prev.roadGeometry && prev.roadGeometry.length > 0) {
-        return {
-          ...route,
-          roadGeometry: prev.roadGeometry,
-          roadDistanceMeters: prev.roadDistanceMeters,
-          roadDurationSeconds: prev.roadDurationSeconds,
-          isRoadRoute: true,
-          orsStatus: 'success',
-        };
-      }
-
-      if (!hasApiKey) {
-        return {
-          ...route,
-          isRoadRoute: false,
-          orsStatus: 'failed',
-        };
-      }
-
-      return {
-        ...route,
-        isRoadRoute: false,
-        orsStatus: 'loading',
-      };
+  // Stand A (0 passengers): Calculate waiting passenger count per Rabat zone
+  const zoneCounts = React.useMemo(() => {
+    const zones = getZonesForCity('Rabat');
+    const counts: Record<string, { zone: CityZone; count: number }> = {};
+    zones.forEach((z) => {
+      counts[z.id] = { zone: z, count: 0 };
     });
 
-    if (!hasApiKey) return;
+    activePassengerPins.forEach((pin) => {
+      let nearestZoneId: string | null = null;
+      let minDistance = Infinity;
 
-    const waypoints = [
-      driverLocation,
-      ...route.stops.map((s) => ({ lat: s.lat, lng: s.lng })),
-    ];
-
-    if (orsTimerRef.current) {
-      clearTimeout(orsTimerRef.current);
-    }
-
-    orsTimerRef.current = setTimeout(() => {
-      fetchORSDirections(waypoints).then((orsResult) => {
-        if (isMounted) {
-          if (orsResult && orsResult.geometry && orsResult.geometry.length > 0) {
-            setOptimizedRoute((prev) => {
-              if (!prev) return null;
-              return {
-                ...prev,
-                roadGeometry: orsResult.geometry,
-                roadDistanceMeters: orsResult.distanceMeters,
-                roadDurationSeconds: orsResult.durationSeconds,
-                isRoadRoute: true,
-                orsStatus: 'success',
-              };
-            });
-          } else {
-            setOptimizedRoute((prev) => {
-              if (!prev) return null;
-              return {
-                ...prev,
-                isRoadRoute: false,
-                orsStatus: 'failed',
-              };
-            });
-          }
+      zones.forEach((z) => {
+        const dist = getDistanceMeters(pin.lat, pin.lng, z.centerLat, z.centerLng);
+        if (dist < minDistance) {
+          minDistance = dist;
+          nearestZoneId = z.id;
         }
       });
-    }, 250);
 
-    return () => {
-      isMounted = false;
-      if (orsTimerRef.current) {
-        clearTimeout(orsTimerRef.current);
+      if (nearestZoneId && counts[nearestZoneId]) {
+        counts[nearestZoneId].count += 1;
       }
-    };
-  }, [isOptimizerExpanded, driverLocation, activePassengerPins, onboardPassengersCount, lang]);
+    });
+
+    return counts;
+  }, [activePassengerPins]);
+
+  // Determine single hottest zone for Stand A (max count > 0 and NO tie for max)
+  const hottestZoneInfo = React.useMemo(() => {
+    const list = Object.values(zoneCounts) as Array<{ zone: CityZone; count: number }>;
+    if (list.length === 0) return null;
+
+    let maxCount = 0;
+    list.forEach((item) => {
+      if (item.count > maxCount) {
+        maxCount = item.count;
+      }
+    });
+
+    if (maxCount === 0) return null;
+
+    const topZones = list.filter((item) => item.count === maxCount);
+    if (topZones.length > 1) {
+      // Tie for top spot -> no single forced highlight
+      return null;
+    }
+
+    return topZones[0]; // { zone: CityZone, count: number }
+  }, [zoneCounts]);
 
   // Notification States
   const [notifPermission, setNotifPermission] = useState<NotificationPermission | 'unsupported'>(
@@ -611,6 +709,8 @@ export const DriverView: React.FC = () => {
     const map = L.map(mapContainerRef.current, {
       center: [driverLocation.lat, driverLocation.lng],
       zoom: 13,
+      minZoom: 12,
+      maxZoom: 18,
       zoomControl: false,
     });
 
@@ -622,7 +722,8 @@ export const DriverView: React.FC = () => {
 
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
       attribution: '&copy; OpenStreetMap',
-      maxZoom: 19,
+      maxZoom: 18,
+      minZoom: 12,
     }).addTo(map);
 
     const layerGroup = L.layerGroup().addTo(map);
@@ -630,10 +731,17 @@ export const DriverView: React.FC = () => {
 
     mapRef.current = map;
 
-    // Force initial size calculation
-    map.invalidateSize();
-    const initTimer1 = setTimeout(() => map.invalidateSize(), 100);
-    const initTimer2 = setTimeout(() => map.invalidateSize(), 300);
+    // Force initial size calculation and fit 2km radius circle bounds automatically
+    const fitInitial2kmBounds = () => {
+      if (!mapRef.current) return;
+      mapRef.current.invalidateSize();
+      const circleBounds = L.latLng(driverLocation.lat, driverLocation.lng).toBounds(MAX_RADIUS_METERS);
+      mapRef.current.fitBounds(circleBounds, { padding: [30, 30] });
+    };
+
+    fitInitial2kmBounds();
+    const initTimer1 = setTimeout(fitInitial2kmBounds, 100);
+    const initTimer2 = setTimeout(fitInitial2kmBounds, 300);
 
     return () => {
       clearTimeout(initTimer1);
@@ -668,7 +776,7 @@ export const DriverView: React.FC = () => {
     };
   }, [isVerified]);
 
-  // 7. Sync Driver Marker
+  // 7. Sync Driver Marker & Continuous Auto-Follow
   useEffect(() => {
     if (!mapRef.current) return;
 
@@ -687,6 +795,10 @@ export const DriverView: React.FC = () => {
       driverMarkerRef.current = marker;
     } else {
       driverMarkerRef.current.setLatLng([driverLocation.lat, driverLocation.lng]);
+    }
+
+    if (isAutoFollowingRef.current) {
+      mapRef.current.panTo([driverLocation.lat, driverLocation.lng], { animate: true });
     }
   }, [driverLocation]);
 
@@ -829,88 +941,142 @@ export const DriverView: React.FC = () => {
 
     passengerClusterGroup.addTo(layerGroupRef.current!);
 
-    // Render Optimized Multi-Stop Route Overlay
-    if (showRouteOnMap && optimizedRoute && optimizedRoute.stops.length > 0) {
-      const straightLinePoints: [number, number][] = [
-        [driverLocation.lat, driverLocation.lng],
-        ...optimizedRoute.stops.map((s) => [s.lat, s.lng] as [number, number]),
-      ];
+    // Render Active Passenger Destination Pin (Super Mode Step 1)
+    if (activeDestination && activeDestination.exactLat && activeDestination.exactLng) {
+      const isCustom = activeDestination.isCustomPinSet;
+      const destMarker = L.marker([activeDestination.exactLat, activeDestination.exactLng], {
+        icon: createActiveDestinationIcon(isCustom),
+        draggable: true,
+        zIndexOffset: 3000,
+      });
 
-      const isRoadReady =
-        optimizedRoute.isRoadRoute &&
-        optimizedRoute.roadGeometry &&
-        optimizedRoute.roadGeometry.length > 0;
+      destMarker.bindPopup(`
+        <div style="font-family: sans-serif; padding: 4px; min-width: 170px;">
+          <div style="font-size: 10px; font-weight: 800; color: #10b981; margin-bottom: 2px; text-transform: uppercase;">
+            🏁 ${t('driver', 'destChoiceTitle')}
+          </div>
+          <strong style="font-size: 13px; color: #ffffff; display: block; margin-bottom: 4px;">
+            ${activeDestination.zoneName}
+          </strong>
+          <div style="font-size: 11px; color: #cbd5e1;">
+            ${isCustom ? '📍 ' + t('driver', 'exactLocationSet') : '🎯 ' + t('driver', 'optionalDragPin')}
+          </div>
+        </div>
+      `);
 
-      const isOrsLoading = optimizedRoute.orsStatus === 'loading';
+      destMarker.on('dragend', (e: any) => {
+        const latlng = e.target.getLatLng();
+        setActiveDestination((prev) => {
+          if (!prev) return null;
+          const updated: ActiveTripDestination = {
+            ...prev,
+            exactLat: latlng.lat,
+            exactLng: latlng.lng,
+            isCustomPinSet: true,
+          };
+          try {
+            localStorage.setItem('chouf_active_trip_destination', JSON.stringify(updated));
+          } catch (err) {
+            console.warn('localStorage save active destination error:', err);
+          }
+          return updated;
+        });
+      });
 
-      if (isRoadReady) {
-        // STATE B: Real road route loaded (smooth fade-in transition)
-        const roadPoints = optimizedRoute.roadGeometry!;
+      destMarker.addTo(layerGroupRef.current!);
+    }
 
-        // Route glow effect
-        L.polyline(roadPoints, {
-          color: '#F57C00',
-          weight: 8,
+    // Render Stand A (0 passengers) Hottest Zone Highlight on Map
+    if (isSuperModeActive && !activeDestination && hottestZoneInfo) {
+      const { zone, count } = hottestZoneInfo;
+
+      L.circle([zone.centerLat, zone.centerLng], {
+        radius: 650,
+        color: '#d97706',
+        fillColor: '#fbbf24',
+        fillOpacity: 0.22,
+        weight: 3,
+        dashArray: '6, 6',
+      }).addTo(layerGroupRef.current!);
+
+      const localizedZoneName = getLocalizedZoneName(zone.name, lang);
+      const markerText = t('driver', 'bestChanceMapMarker')
+        .replace('{zone}', localizedZoneName)
+        .replace('{count}', String(count));
+
+      const goldIcon = L.divIcon({
+        className: 'custom-hottest-zone-marker',
+        html: `
+          <div style="
+            background: linear-gradient(135deg, #f59e0b, #d97706);
+            color: #ffffff;
+            padding: 5px 12px;
+            border-radius: 9999px;
+            font-weight: 900;
+            font-size: 11px;
+            box-shadow: 0 4px 14px rgba(217, 119, 6, 0.45);
+            border: 2px solid #ffffff;
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            white-space: nowrap;
+            transform: translate(-50%, -50%);
+          ">
+            <span style="font-size: 13px;">🏆</span>
+            <span>${markerText}</span>
+          </div>
+        `,
+        iconSize: [0, 0],
+        iconAnchor: [0, 0],
+      });
+
+      const hotspotMarker = L.marker([zone.centerLat, zone.centerLng], {
+        icon: goldIcon,
+        zIndexOffset: 3500,
+      });
+
+      const countText = count === 1 ? t('driver', 'waitingPassenger') : t('driver', 'waitingPassengers');
+
+      hotspotMarker.bindPopup(`
+        <div style="font-family: sans-serif; padding: 4px;">
+          <div style="font-size: 10px; font-weight: 800; color: #d97706; text-transform: uppercase;">
+            ${t('driver', 'bestChancePopupTitle')}
+          </div>
+          <strong style="font-size: 13px; color: #ffffff; display: block; margin-top: 2px;">
+            ${localizedZoneName}
+          </strong>
+          <div style="font-size: 11px; color: #cbd5e1; margin-top: 4px;">
+            🔥 <strong>${count}</strong> ${countText}
+          </div>
+        </div>
+      `);
+
+      hotspotMarker.addTo(layerGroupRef.current!);
+    }
+
+    // Render Super Mode Selected Candidate Route Overlay on Map (Stand B)
+    if (isSuperModeActive && activeDestination && selectedCandidateId && superModeCandidates) {
+      const selectedCand = superModeCandidates.find((c) => c.passenger.id === selectedCandidateId);
+      if (selectedCand && selectedCand.routeGeometry && selectedCand.routeGeometry.length > 0) {
+        L.polyline(selectedCand.routeGeometry, {
+          color: '#059669',
+          weight: 7,
           opacity: 0.35,
           className: 'route-line-fadeIn',
         }).addTo(layerGroupRef.current!);
 
-        // Solid animated dash route line
-        L.polyline(roadPoints, {
-          color: '#E65100',
+        L.polyline(selectedCand.routeGeometry, {
+          color: '#10b981',
           weight: 4,
           dashArray: '8, 8',
           opacity: 0.95,
           className: 'route-line-fadeIn',
-        }).addTo(layerGroupRef.current!);
-      } else if (isOrsLoading) {
-        // STATE A: ORS request in flight -> subtle, faint, gently pulsing placeholder line
-        L.polyline(straightLinePoints, {
-          color: '#F57C00',
-          weight: 3.5,
-          opacity: 0.35,
-          dashArray: '6, 10',
-          className: 'route-line-loading',
-        }).addTo(layerGroupRef.current!);
-      } else {
-        // STATE C: Fallback when ORS fails or returns empty -> solid straight-line route
-        L.polyline(straightLinePoints, {
-          color: '#F57C00',
-          weight: 8,
-          opacity: 0.35,
-        }).addTo(layerGroupRef.current!);
-
-        L.polyline(straightLinePoints, {
-          color: '#E65100',
-          weight: 4,
-          dashArray: '8, 8',
-          opacity: 0.95,
         }).addTo(layerGroupRef.current!);
       }
-
-      // Step markers
-      optimizedRoute.stops.forEach((stop) => {
-        const stepMarker = L.marker([stop.lat, stop.lng], {
-          icon: createRouteStepIcon(stop.stepNumber, stop.type),
-          zIndexOffset: 2000,
-        });
-
-        const typeLabel = stop.type === 'pickup' ? `📍 ${t('driver', 'pickupStep')}` : `🏁 ${t('driver', 'dropoffStep')}`;
-        stepMarker.bindPopup(`
-          <div style="font-family: sans-serif; padding: 2px;">
-            <div style="font-size: 10px; font-weight: 800; color: ${stop.type === 'pickup' ? '#60a5fa' : '#34d399'}; margin-bottom: 2px;">
-              ${t('driver', 'routeProposed')} • ${t('driver', 'stepLabel')} ${stop.stepNumber} (${typeLabel})
-            </div>
-            <strong style="font-size: 12px; color: #ffffff;">${stop.name}</strong>
-          </div>
-        `);
-
-        stepMarker.addTo(layerGroupRef.current!);
-      });
     }
 
     isClearingLayersRef.current = false;
-  }, [activePassengerPins, driverLocation, showRouteOnMap, optimizedRoute]);
+  }, [activePassengerPins, driverLocation, activeDestination, isSuperModeActive, selectedCandidateId, superModeCandidates, hottestZoneInfo]);
 
   // Access Gate Guard Screen
   if (!isVerified) {
@@ -1075,7 +1241,7 @@ export const DriverView: React.FC = () => {
             isAutoFollowingRef.current = true;
             setIsAutoFollowing(true);
             if (mapRef.current) {
-              mapRef.current.setView([driverLocation.lat, driverLocation.lng], 13, { animate: true });
+              mapRef.current.panTo([driverLocation.lat, driverLocation.lng], { animate: true });
             }
           }}
           className={`absolute bottom-8 end-4 z-[400] flex items-center gap-2 px-4 py-2.5 rounded-full font-extrabold text-xs shadow-xl backdrop-blur-md transition-all active:scale-95 border ${
@@ -1142,181 +1308,419 @@ export const DriverView: React.FC = () => {
           )}
         </div>
 
-        {/* ⚡ Route Optimization Feature Section */}
+        {/* 🎯 Bestemmingskeuze Eerste Passagier (Super Mode Step 1) */}
+        <div className="bg-white border border-orange-200/90 rounded-2xl p-4 space-y-3 shadow-sm">
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2.5">
+              <div className="w-8 h-8 rounded-xl bg-orange-50 border border-orange-200 flex items-center justify-center text-sm font-extrabold text-[#F57C00] shrink-0">
+                🏁
+              </div>
+              <div>
+                <h4 className="font-extrabold text-xs text-slate-900 leading-tight">
+                  {t('driver', 'destChoiceTitle')}
+                </h4>
+                <p className="text-[11px] text-slate-500 font-medium">
+                  {t('driver', 'destChoiceSubtitle')}
+                </p>
+              </div>
+            </div>
+
+            {activeDestination && (
+              <span className="text-[10px] font-extrabold bg-emerald-100 text-emerald-800 border border-emerald-300 px-2.5 py-1 rounded-full shrink-0 flex items-center gap-1">
+                <span>✓</span>
+                <span>{t('driver', 'passengerOnboard')}</span>
+              </span>
+            )}
+          </div>
+
+          {/* Active Destination Card OR Trigger Button */}
+          {activeDestination ? (
+            <div className="bg-emerald-50/90 border border-emerald-200/90 rounded-xl p-3 space-y-2.5">
+              <div className="flex items-start justify-between gap-2">
+                <div className="space-y-0.5">
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-xs">🎯</span>
+                    <span className="text-xs font-black text-emerald-950 uppercase tracking-wide">
+                      {getLocalizedZoneName(activeDestination.zoneName, lang)}
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-emerald-800 font-medium leading-tight">
+                    {activeDestination.isCustomPinSet
+                      ? `📍 ${t('driver', 'exactLocationSet')}`
+                      : `🎯 Center (${activeDestination.centerLat.toFixed(4)}, ${activeDestination.centerLng.toFixed(4)})`}
+                  </p>
+                </div>
+              </div>
+
+              <div className="text-[10px] text-emerald-800 bg-white/80 p-2 rounded-lg border border-emerald-200/60 leading-tight flex items-center gap-1.5">
+                <span className="shrink-0">💡</span>
+                <span>{t('driver', 'optionalDragPin')}</span>
+              </div>
+
+              <div className="flex gap-2 pt-0.5">
+                <button
+                  type="button"
+                  onClick={() => setIsZonePickerOpen(!isZonePickerOpen)}
+                  className="flex-1 py-2 px-3 bg-white hover:bg-slate-100 text-slate-800 font-extrabold text-[11px] rounded-xl border border-slate-200 shadow-xs transition active:scale-95 cursor-pointer text-center"
+                >
+                  🔄 {t('driver', 'changeDestination')}
+                </button>
+                <button
+                  type="button"
+                  onClick={handleClearDestination}
+                  className="py-2 px-3 bg-rose-50 hover:bg-rose-100 text-rose-700 font-bold text-[11px] rounded-xl border border-rose-200 transition active:scale-95 cursor-pointer"
+                >
+                  🏁 {t('driver', 'clearDestination')}
+                </button>
+              </div>
+            </div>
+          ) : (
+            <div>
+              {!isZonePickerOpen ? (
+                <button
+                  type="button"
+                  onClick={() => setIsZonePickerOpen(true)}
+                  className="w-full py-3.5 px-4 bg-[#F57C00] hover:bg-[#e07000] active:bg-[#c76300] text-white font-extrabold text-xs rounded-xl shadow-md shadow-[#F57C00]/20 transition-all active:scale-[0.98] flex items-center justify-center gap-2 cursor-pointer"
+                >
+                  <span>🚖</span>
+                  <span>{t('driver', 'pickupPassengerBtn')}</span>
+                </button>
+              ) : null}
+            </div>
+          )}
+
+          {/* Zone Selection Grid (2 Columns, Large Touch Targets, No Scrolling Needed) */}
+          {isZonePickerOpen && (
+            <div className="space-y-2 pt-1 border-t border-slate-100">
+              <div className="flex items-center justify-between text-xs px-1">
+                <span className="font-bold text-slate-700">
+                  📍 {t('driver', 'selectZone')} ({cityZones.length})
+                </span>
+                {activeDestination && (
+                  <button
+                    type="button"
+                    onClick={() => setIsZonePickerOpen(false)}
+                    className="text-[11px] font-bold text-slate-400 hover:text-slate-600 cursor-pointer"
+                  >
+                    ✕ {t('driver', 'close')}
+                  </button>
+                )}
+              </div>
+
+              <div className="grid grid-cols-2 gap-2">
+                {cityZones.map((zone) => {
+                  const isSelected = activeDestination?.zoneId === zone.id;
+                  return (
+                    <button
+                      key={zone.id}
+                      type="button"
+                      onClick={() => handleSelectZone(zone)}
+                      className={`p-3 rounded-xl font-extrabold text-xs flex flex-col items-center justify-center text-center gap-1 transition-all shadow-xs cursor-pointer active:scale-[0.97] min-h-[64px] ${
+                        isSelected
+                          ? 'bg-emerald-600 text-white border-2 border-emerald-500 ring-2 ring-emerald-500/30'
+                          : 'bg-orange-50/90 hover:bg-[#F57C00] active:bg-[#e07000] text-slate-900 hover:text-white border border-orange-200/90'
+                      }`}
+                    >
+                      <span className="text-base leading-none">📍</span>
+                      <span className="leading-snug font-bold">{getLocalizedZoneName(zone.name, lang)}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* ⚡ Super Mode Section (Auto-switching Stand A & Stand B) */}
         <div
-          className={`rounded-2xl transition-all shadow-sm border ${
-            isOptimizerExpanded
-              ? 'bg-slate-50 text-slate-800 border-slate-200/80 p-4 space-y-3'
-              : 'bg-white hover:bg-orange-50/50 border-slate-200/90 text-slate-900 p-3.5'
+          className={`rounded-2xl transition-all shadow-sm border p-4 space-y-3 ${
+            isSuperModeActive
+              ? 'bg-emerald-50/50 text-slate-800 border-emerald-300/80'
+              : 'bg-white hover:bg-emerald-50/30 border-slate-200/90 text-slate-900'
           }`}
         >
-          <button
-            type="button"
-            onClick={() => setIsOptimizerExpanded(!isOptimizerExpanded)}
-            className="w-full flex items-center justify-between text-start cursor-pointer group gap-3"
-          >
+          <div className="flex items-center justify-between text-start gap-3">
             <div className="flex items-center gap-3 flex-1 min-w-0">
               <div
                 className={`w-9 h-9 rounded-xl flex items-center justify-center text-sm font-extrabold shrink-0 transition-all ${
-                  isOptimizerExpanded
-                    ? 'bg-[#F57C00] text-white shadow-md shadow-[#F57C00]/30'
-                    : 'bg-slate-100 border border-slate-200 text-slate-500 group-hover:bg-orange-100 group-hover:text-orange-600 group-hover:border-orange-200'
+                  isSuperModeActive
+                    ? 'bg-emerald-600 text-white shadow-md shadow-emerald-600/30'
+                    : 'bg-slate-100 border border-slate-200 text-slate-500'
                 }`}
               >
                 ⚡
               </div>
+
               <div className="flex-1 min-w-0 space-y-0.5">
-                <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1 pe-1">
+                <div className="flex items-center justify-between gap-x-2 pe-1">
                   <h4 className="font-extrabold text-xs text-slate-900 leading-snug flex items-center gap-1.5">
-                    <span>{t('driver', 'routeOptimizerTitle')}</span>
+                    <span>{t('driver', 'superModeToggle')}</span>
+                    {isSuperModeActive && (
+                      <span className="text-[9px] bg-emerald-100 text-emerald-800 font-black px-1.5 py-0.2 rounded-md uppercase">
+                        {!activeDestination ? t('driver', 'standAShort') : t('driver', 'standBShort')}
+                      </span>
+                    )}
                   </h4>
-                  {isOptimizerExpanded ? (
-                    <span className="inline-flex items-center gap-1 bg-[#F57C00] text-white text-[10px] px-2.5 py-0.5 rounded-full font-extrabold whitespace-nowrap shrink-0 shadow-xs">
-                      ON {optimizedRoute && optimizedRoute.passengers.length > 0 ? `· ${optimizedRoute.passengers.length} ${optimizedRoute.passengers.length === 1 ? t('driver', 'match') : t('driver', 'matches')}` : ''}
+                  {isSuperModeActive ? (
+                    <span className="inline-flex items-center gap-1 bg-emerald-600 text-white text-[10px] px-2.5 py-0.5 rounded-full font-extrabold whitespace-nowrap shrink-0 shadow-xs">
+                      {t('driver', 'statusOn')}
                     </span>
                   ) : (
-                    <span className="inline-flex items-center gap-1 bg-slate-100 text-slate-500 border border-slate-200 text-[10px] px-2.5 py-0.5 rounded-full font-extrabold whitespace-nowrap shrink-0 group-hover:border-orange-300 group-hover:text-orange-600">
-                      OFF
+                    <span className="inline-flex items-center gap-1 bg-slate-100 text-slate-500 border border-slate-200 text-[10px] px-2.5 py-0.5 rounded-full font-extrabold whitespace-nowrap shrink-0">
+                      {t('driver', 'statusOff')}
                     </span>
                   )}
                 </div>
-                <p className="text-[11px] text-slate-500 leading-relaxed truncate">
-                  {t('driver', 'routeOptimizerDesc')}
+                <p className="text-[11px] text-slate-500 leading-snug">
+                  {!activeDestination
+                    ? t('driver', 'superModeSubStandA')
+                    : t('driver', 'superModeSubtitle')}
                 </p>
               </div>
             </div>
-            <ChevronDown
-              className={`w-4 h-4 text-slate-400 group-hover:text-slate-600 transition-transform duration-200 shrink-0 ${
-                isOptimizerExpanded ? 'rotate-180' : ''
-              }`}
-            />
-          </button>
 
-          {isOptimizerExpanded && (
-            <div className="space-y-4 pt-3.5 mt-1 border-t border-slate-200/80 text-xs">
-              {/* Onboard Passenger Counter */}
-              <div>
-                <label className="block text-[11px] font-bold text-slate-700 mb-2">
-                  {t('driver', 'onboardPassengers')}
-                </label>
-                <div className="grid grid-cols-4 gap-1.5">
-                  {[0, 1, 2, 3].map((num) => {
-                    const isSelected = onboardPassengersCount === num;
-                    const isFull = num === 3;
+            {/* Toggle Switch */}
+            <button
+              type="button"
+              onClick={handleToggleSuperMode}
+              aria-label={t('driver', 'superModeToggle')}
+              className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
+                isSuperModeActive ? 'bg-emerald-600' : 'bg-slate-300'
+              }`}
+            >
+              <span
+                className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow-md ring-0 transition duration-200 ease-in-out ${
+                  isSuperModeActive
+                    ? isRTL ? '-translate-x-5' : 'translate-x-5'
+                    : 'translate-x-0'
+                }`}
+              />
+            </button>
+          </div>
+
+          {!isSuperModeActive ? (
+            <div className="text-[11px] text-slate-500 bg-slate-50 p-2.5 rounded-xl border border-slate-200/80 text-center font-medium">
+              💡 {t('driver', 'superModeHintOff')}
+            </div>
+          ) : !activeDestination ? (
+            /* STAND A: 0 Passagiers - Zone Analyse & Hotspot Highlight */
+            <div className="space-y-3 pt-2 border-t border-emerald-200/80">
+              <div className="flex items-center justify-between text-xs px-0.5">
+                <span className="font-extrabold text-slate-900 flex items-center gap-1.5">
+                  <span className="w-2 h-2 rounded-full bg-amber-500 animate-ping" />
+                  <span>{t('driver', 'standALabel')}</span>
+                </span>
+                <span className="text-[10px] font-bold text-amber-700 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded-md">
+                  {t('driver', 'zoneAnalysisBadge')}
+                </span>
+              </div>
+
+              {/* Hottest Zone Hero Card or Tie Banner */}
+              {hottestZoneInfo ? (
+                <div
+                  onClick={() => {
+                    if (mapRef.current) {
+                      mapRef.current.flyTo(
+                        [hottestZoneInfo.zone.centerLat, hottestZoneInfo.zone.centerLng],
+                        15,
+                        { animate: true }
+                      );
+                    }
+                  }}
+                  className="p-3 bg-gradient-to-r from-amber-500 to-amber-600 rounded-xl text-white shadow-md border border-amber-400/80 space-y-1.5 cursor-pointer active:scale-[0.98] transition-all"
+                >
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] font-black uppercase tracking-wider bg-white/20 text-white px-2 py-0.5 rounded-md">
+                      {t('driver', 'bestChanceTag')}
+                    </span>
+                    <span className="text-[11px] font-extrabold bg-white text-amber-900 px-2.5 py-0.5 rounded-full shadow-2xs">
+                      🔥 {hottestZoneInfo.count} {hottestZoneInfo.count === 1 ? t('driver', 'waitingPassenger') : t('driver', 'waitingPassengers')}
+                    </span>
+                  </div>
+                  <h5 className="text-sm font-black tracking-tight leading-snug">
+                    {getLocalizedZoneName(hottestZoneInfo.zone.name, lang)}
+                  </h5>
+                  <div className="flex items-center justify-between text-[10px] text-amber-100 pt-0.5">
+                    <span>{t('driver', 'highestConcentration')}</span>
+                    <span className="font-bold underline">{t('driver', 'viewOnMap')}</span>
+                  </div>
+                </div>
+              ) : (
+                <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl text-center space-y-1">
+                  <div className="text-sm font-bold text-slate-700">{t('driver', 'noSpecificHotspot')}</div>
+                  <p className="text-[10px] text-slate-500 leading-snug">
+                    {t('driver', 'noSpecificHotspotDesc')}
+                  </p>
+                </div>
+              )}
+
+              {/* Zone Breakdown List */}
+              <div className="space-y-1.5 pt-1">
+                <div className="text-[11px] font-extrabold text-slate-700 flex items-center justify-between px-1">
+                  <span>{t('driver', 'waitingPerZoneTitle')}</span>
+                  <span className="text-[10px] font-medium text-slate-500">
+                    {t('driver', 'totalWaiting').replace('{count}', String(activePassengerPins.length))}
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-1 gap-1.5 max-h-56 overflow-y-auto pe-1">
+                  {getZonesForCity('Rabat').map((z) => {
+                    const zData = zoneCounts[z.id];
+                    const count = zData ? zData.count : 0;
+                    const isWinner = hottestZoneInfo && hottestZoneInfo.zone.id === z.id;
+
                     return (
-                      <button
-                        key={num}
-                        type="button"
-                        onClick={() => setOnboardPassengersCount(num)}
-                        className={`py-2 px-1 rounded-xl font-bold text-[11px] border transition-all text-center flex flex-col items-center justify-center gap-0.5 ${
-                          isSelected
-                            ? isFull
-                              ? 'bg-rose-600 text-white border-rose-500 ring-2 ring-rose-500/30 shadow-md'
-                              : 'bg-orange-500 text-white border-orange-600 ring-2 ring-orange-500/30 shadow-md'
-                            : 'bg-white hover:bg-slate-100 text-slate-700 border-slate-200 shadow-sm'
+                      <div
+                        key={z.id}
+                        onClick={() => {
+                          if (mapRef.current) {
+                            mapRef.current.flyTo([z.centerLat, z.centerLng], 14, { animate: true });
+                          }
+                        }}
+                        className={`p-2.5 rounded-xl border flex items-center justify-between text-xs transition-all cursor-pointer ${
+                          isWinner
+                            ? 'bg-amber-50/90 border-amber-400 ring-2 ring-amber-400/30 shadow-xs'
+                            : 'bg-white hover:bg-slate-50 border-slate-200/90'
                         }`}
                       >
-                        <span className="text-xs">
-                          {num === 0 ? '🚖 0' : isFull ? '🈵 3/3' : `👥 ${num}`}
-                        </span>
-                        <span className="text-[9px] opacity-80 font-medium">
-                          {isFull
-                            ? t('driver', 'taxiFullShort')
-                            : `${3 - num} ${3 - num === 1 ? t('driver', 'seat') : t('driver', 'seats')}`}
-                        </span>
-                      </button>
+                        <div className="flex items-center gap-2 min-w-0">
+                          <span
+                            className={`w-2.5 h-2.5 rounded-full shrink-0 ${
+                              isWinner ? 'bg-amber-500 animate-pulse' : count > 0 ? 'bg-emerald-500' : 'bg-slate-300'
+                            }`}
+                          />
+                          <span className={`font-bold truncate ${isWinner ? 'text-amber-950' : 'text-slate-800'}`}>
+                            {getLocalizedZoneName(z.name, lang)}
+                          </span>
+                        </div>
+
+                        <div className="flex items-center gap-1.5 shrink-0">
+                          {isWinner && (
+                            <span className="text-[9px] font-black bg-amber-500 text-white px-1.5 py-0.2 rounded uppercase">
+                              {t('driver', 'bestChanceShort')}
+                            </span>
+                          )}
+                          <span
+                            className={`text-[11px] font-black px-2 py-0.5 rounded-lg ${
+                              count > 0
+                                ? isWinner
+                                  ? 'bg-amber-500 text-white'
+                                  : 'bg-emerald-100 text-emerald-800'
+                                : 'bg-slate-100 text-slate-400'
+                            }`}
+                          >
+                            {count}
+                          </span>
+                        </div>
+                      </div>
                     );
                   })}
                 </div>
               </div>
+            </div>
+          ) : (
+            /* STAND B: 1 Passagier - Omweg-check Kandidatenlijst */
+            <div className="space-y-2.5 pt-2 border-t border-emerald-200/80">
+              <div className="flex items-center justify-between text-xs px-0.5">
+                <span className="font-extrabold text-slate-900 flex items-center gap-1.5">
+                  <span className="w-2 h-2 rounded-full bg-emerald-500 animate-ping" />
+                  <span>{t('driver', 'standBLabel')}</span>
+                </span>
+                <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-md">
+                  {t('driver', 'detourCheckBadge')}
+                </span>
+              </div>
 
-              {/* Optimization Results */}
-              {onboardPassengersCount === 3 ? (
-                <div className="p-3 bg-slate-100 rounded-xl border border-slate-200 text-center text-slate-600 text-[11px]">
-                  <span>🚖 {t('driver', 'taxiFull')}</span>
-                </div>
-              ) : optimizedRoute ? (
-                <div className="bg-white rounded-xl p-3 border border-slate-200 shadow-sm space-y-2.5">
-                  <div className="flex items-center justify-between text-[11px] gap-2">
-                    <span className="font-semibold text-orange-700 flex items-center gap-1.5">
-                      <span className="w-2 h-2 rounded-full bg-orange-500 animate-pulse shrink-0" />
-                      <span>{optimizedRoute.explanation}</span>
-                    </span>
-                    <div className="flex items-center gap-1.5 shrink-0">
-                      {optimizedRoute.isRoadRoute && optimizedRoute.roadDurationSeconds ? (
-                        <span className="text-[10px] text-emerald-800 bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-200 font-bold flex items-center gap-1">
-                          <span>⏱️ {formatDuration(optimizedRoute.roadDurationSeconds, lang)}</span>
-                        </span>
-                      ) : null}
-                      <span className="text-[10px] text-slate-700 bg-slate-100 px-2 py-0.5 rounded-md border border-slate-200 font-medium">
-                        {optimizedRoute.isRoadRoute && optimizedRoute.roadDistanceMeters
-                          ? `${(optimizedRoute.roadDistanceMeters / 1000).toFixed(1)} km 🛣️`
-                          : `${(optimizedRoute.totalDistanceMeters / 1000).toFixed(1)} km 📏`}
-                      </span>
-                    </div>
-                  </div>
+              <button
+                type="button"
+                onClick={handleRunSuperModeCheck}
+                disabled={isCalculatingSuperMode}
+                className="w-full py-2.5 px-3 bg-emerald-600 hover:bg-emerald-500 active:bg-emerald-700 disabled:opacity-50 text-white font-extrabold text-xs rounded-xl border border-emerald-500 shadow-xs flex items-center justify-center gap-2 cursor-pointer transition active:scale-95"
+              >
+                {isCalculatingSuperMode ? (
+                  <>
+                    <span className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin shrink-0" />
+                    <span>{t('driver', 'calculatingDetours')}</span>
+                  </>
+                ) : (
+                  <span>{t('driver', 'checkCandidatesBtn')}</span>
+                )}
+              </button>
 
-                  {/* Step Sequence List */}
-                  <div className="space-y-1.5 pt-1">
-                    {/* Prominent Navigation Button at Top */}
-                    <button
-                      type="button"
-                      onClick={() => {
-                        if (!optimizedRoute || !optimizedRoute.stops || optimizedRoute.stops.length === 0) return;
-                        console.log('[NAV] Opening Google Maps route:', optimizedRoute.googleMapsUrl);
-                        window.open(optimizedRoute.googleMapsUrl, '_blank', 'noopener,noreferrer');
-                      }}
-                      disabled={!optimizedRoute || !optimizedRoute.stops || optimizedRoute.stops.length === 0}
-                      className="w-full py-2.5 px-3 bg-emerald-600 hover:bg-emerald-500 active:bg-emerald-700 disabled:opacity-50 text-white font-extrabold text-xs rounded-xl border border-emerald-500 flex items-center justify-center gap-2 shadow-md shadow-emerald-600/30 cursor-pointer disabled:cursor-not-allowed transition-all"
-                    >
-                      <span className="text-sm">🧭</span>
-                      <span>{t('driver', 'navWithGoogleMaps')}</span>
-                    </button>
+              {/* Candidate Cards List OR Empty State */}
+              {superModeCandidates !== null && !isCalculatingSuperMode && (
+                <div className="space-y-2 pt-1">
+                  {superModeCandidates.length > 0 ? (
+                    superModeCandidates.map((cand) => {
+                      const isSelected = selectedCandidateId === cand.passenger.id;
+                      const pId = cand.passenger.id.slice(-4);
+                      const pickupKm = (cand.pickupDistanceMeters / 1000).toFixed(1);
 
-                    {optimizedRoute.stops.map((stop) => (
-                      <div
-                        key={stop.id}
-                        className="flex items-center gap-2 bg-slate-50 p-2 rounded-lg border border-slate-200/80 text-[11px]"
-                      >
-                        <span
-                          className={`w-5 h-5 rounded-full flex items-center justify-center font-extrabold text-[10px] shrink-0 text-white ${
-                            stop.type === 'pickup' ? 'bg-orange-500' : 'bg-emerald-600'
+                      let badgeBg = 'bg-emerald-500 text-white';
+                      let badgeBorder = 'border-emerald-600';
+                      if (cand.colorCategory === 'orange') {
+                        badgeBg = 'bg-amber-500 text-white';
+                        badgeBorder = 'border-amber-600';
+                      } else if (cand.colorCategory === 'red') {
+                        badgeBg = 'bg-rose-500 text-white';
+                        badgeBorder = 'border-rose-600';
+                      }
+
+                      return (
+                        <div
+                          key={cand.passenger.id}
+                          onClick={() => handleSelectSuperModeCandidate(cand)}
+                          className={`p-3 rounded-xl border transition-all cursor-pointer space-y-1.5 active:scale-[0.98] ${
+                            isSelected
+                              ? 'bg-emerald-100/90 border-emerald-500 ring-2 ring-emerald-500/30 shadow-md'
+                              : 'bg-white hover:bg-slate-50 border-slate-200/90 shadow-2xs'
                           }`}
                         >
-                          {stop.stepNumber}
-                        </span>
-                        <span className="text-xs shrink-0">
-                          {stop.type === 'pickup' ? '📍' : '🏁'}
-                        </span>
-                        <div className="flex-1 truncate">
-                          <span className="font-semibold text-slate-800">
-                            {stop.type === 'pickup' ? t('driver', 'pickupStep') : t('driver', 'dropoffStep')}:
-                          </span>{' '}
-                          <span className="text-slate-600 font-medium">{stop.name}</span>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
+                          <div className="flex items-center justify-between gap-2">
+                            <div className="flex items-center gap-2">
+                              <span className={`w-2.5 h-2.5 rounded-full shrink-0 ${badgeBg}`} />
+                              <span className="font-extrabold text-xs text-slate-900">
+                                {cand.passenger.bestemming_tekst
+                                  ? `Passager #${pId} (${cand.passenger.bestemming_tekst})`
+                                  : `Passager #${pId}`}
+                              </span>
+                            </div>
 
-                  {/* Map Toggle Button */}
-                  <div className="pt-0.5">
-                    <button
-                      type="button"
-                      onClick={() => setShowRouteOnMap(!showRouteOnMap)}
-                      className="w-full py-2 px-3 rounded-xl font-semibold text-[11px] bg-slate-100 text-slate-700 border border-slate-200 hover:bg-slate-200 transition-all flex items-center justify-center gap-1.5"
-                    >
-                      <span>🗺️</span>
-                      <span>
-                        {showRouteOnMap
-                          ? t('driver', 'hideRouteOnMap')
-                          : t('driver', 'showRouteOnMap')}
-                      </span>
-                    </button>
-                  </div>
-                </div>
-              ) : (
-                <div className="p-3 bg-slate-100 rounded-xl border border-slate-200 text-center text-slate-500 text-[11px]">
-                  <span>{t('driver', 'noOptimizedRoute')}</span>
+                            <span className={`text-[10px] font-black px-2 py-0.5 rounded-full border ${badgeBg} ${badgeBorder}`}>
+                              +{cand.detourMinutes} min {t('driver', 'detourLabel')}
+                            </span>
+                          </div>
+
+                          <div className="flex items-center justify-between text-[11px] text-slate-600 px-0.5">
+                            <span>📍 Oppikken op ~{pickupKm} km</span>
+                            <span className="font-bold text-emerald-800">
+                              {isSelected ? `✓ ${t('driver', 'selectedCandidate')}` : t('driver', 'selectCandidate')}
+                            </span>
+                          </div>
+
+                          {isSelected && lastNotifSentCandidateId === cand.passenger.id && (
+                            <div className="mt-1.5 pt-1.5 border-t border-emerald-300/80 text-[10px] text-emerald-950 font-extrabold flex items-center gap-1.5 bg-emerald-200/60 p-2 rounded-lg leading-tight">
+                              <span className="text-xs">📲</span>
+                              <span>
+                                {t('driver', 'p1NotifSentToast').replace('{minutes}', cand.detourMinutes.toString())}
+                              </span>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })
+                  ) : (
+                    /* Empty State: Geen goede match nu */
+                    <div className="p-3.5 bg-slate-50 border border-slate-200 rounded-xl text-center space-y-1">
+                      <div className="text-lg">🛑</div>
+                      <h6 className="font-extrabold text-xs text-slate-900">
+                        {t('driver', 'noMatchFound')}
+                      </h6>
+                      <p className="text-[10px] text-slate-500 font-medium leading-tight">
+                        {t('driver', 'noMatchFoundSub')}
+                      </p>
+                    </div>
+                  )}
                 </div>
               )}
             </div>
