@@ -152,6 +152,58 @@ const createDestinationIcon = () =>
 
 export const DriverView: React.FC = () => {
   const [lang] = useLanguage();
+
+  // Driver Gate Verification State
+  const [isVerified, setIsVerified] = useState<boolean>(() => {
+    try {
+      if (typeof window === 'undefined') return true;
+      const verified = localStorage.getItem('chouf_driver_verified');
+      if (verified === null) return false;
+      return verified === 'true' || verified === '1';
+    } catch (err) {
+      console.warn('[DriverView] localStorage read error, failing open:', err);
+      return true; // Fail open safety rule
+    }
+  });
+
+  const [phoneInput, setPhoneInput] = useState<string>(() => {
+    try {
+      return localStorage.getItem('chouf_driver_phone') || '';
+    } catch {
+      return '';
+    }
+  });
+
+  const handleOpenWhatsapp = () => {
+    try {
+      localStorage.setItem('chouf_driver_verified', 'true');
+      if (phoneInput.trim()) {
+        localStorage.setItem('chouf_driver_phone', phoneInput.trim());
+      }
+    } catch (err) {
+      console.warn('[DriverView] localStorage write error:', err);
+    }
+
+    const digitsOnly = phoneInput.replace(/\D/g, '');
+    const last4 = digitsOnly.length >= 4 ? digitsOnly.slice(-4) : digitsOnly.padEnd(4, '0');
+    const refCode = `CH-${last4 || '0000'}`;
+
+    const formattedPhone = phoneInput.trim() || 'Non spécifié';
+    const message = `Bonjour, je souhaite rejoindre Chouf comme chauffeur. Mon numéro: ${formattedPhone}, code: ${refCode}`;
+    const waUrl = `https://wa.me/212611053649?text=${encodeURIComponent(message)}`;
+
+    window.open(waUrl, '_blank', 'noopener,noreferrer');
+    setIsVerified(true);
+  };
+
+  const handleLogout = () => {
+    try {
+      localStorage.removeItem('chouf_driver_verified');
+    } catch (err) {
+      console.warn('[DriverView] localStorage logout error:', err);
+    }
+    setIsVerified(false);
+  };
   const [driverLocation, setDriverLocation] = useState<{ lat: number; lng: number }>(DEFAULT_DRIVER_CENTER);
   const [driverUserId, setDriverUserId] = useState<string | null>(null);
 
@@ -830,6 +882,76 @@ export const DriverView: React.FC = () => {
     isClearingLayersRef.current = false;
   }, [activePassengerPins, driverLocation, showRouteOnMap, optimizedRoute]);
 
+  // Access Gate Guard Screen
+  if (!isVerified) {
+    const digitsOnly = phoneInput.replace(/\D/g, '');
+    const last4 = digitsOnly.length >= 4 ? digitsOnly.slice(-4) : digitsOnly.padEnd(4, '0');
+    const refCode = `CH-${last4 || '0000'}`;
+
+    return (
+      <div className="relative w-full h-full min-h-[calc(100vh-3.5rem)] flex items-center justify-center p-4 bg-slate-50 text-slate-900 font-sans overflow-y-auto">
+        <div className="w-full max-w-md bg-white border border-slate-200/90 rounded-3xl p-6 sm:p-8 shadow-xl space-y-6 my-auto">
+          {/* Brand Header */}
+          <div className="text-center space-y-2">
+            <div className="w-16 h-16 rounded-2xl bg-orange-50 border border-orange-200/80 flex items-center justify-center mx-auto shadow-sm p-2">
+              <img
+                src="https://i.ibb.co/ynMdVvwn/chouflogotransparant-1.png"
+                alt="Chouf Logo"
+                className="w-full h-full object-contain"
+              />
+            </div>
+            <h2 className="text-2xl font-black text-slate-900 tracking-tight">
+              {t('driver', 'gateTitle')}
+            </h2>
+            <p className="text-xs font-semibold text-slate-500 max-w-xs mx-auto">
+              {t('driver', 'gateSubtitle')}
+            </p>
+          </div>
+
+          {/* Form Controls */}
+          <div className="space-y-4 pt-2">
+            <div>
+              <label className="block text-xs font-bold text-slate-700 mb-1.5">
+                {t('driver', 'gatePhoneLabel')}
+              </label>
+              <input
+                type="tel"
+                value={phoneInput}
+                onChange={(e) => setPhoneInput(e.target.value)}
+                placeholder={t('driver', 'gatePhonePlaceholder')}
+                className="w-full px-4 py-3 bg-slate-50 border border-slate-200/90 rounded-2xl text-slate-900 font-medium text-sm placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-[#F57C00]/40 focus:border-[#F57C00] transition"
+              />
+            </div>
+
+            {/* Reference Code Display */}
+            <div className="bg-orange-50/80 border border-orange-200/80 rounded-2xl p-4 text-center space-y-1">
+              <span className="text-[11px] font-bold text-orange-800 uppercase tracking-wider block">
+                {t('driver', 'gateRefCodeLabel')}
+              </span>
+              <span className="text-2xl font-black text-[#F57C00] font-mono tracking-widest block">
+                {refCode}
+              </span>
+            </div>
+
+            {/* Big Green WhatsApp Button */}
+            <button
+              type="button"
+              onClick={handleOpenWhatsapp}
+              className="w-full py-3.5 px-4 bg-emerald-600 hover:bg-emerald-500 active:bg-emerald-700 text-white font-extrabold text-sm rounded-2xl shadow-lg shadow-emerald-600/30 transition-all flex items-center justify-center gap-2.5 active:scale-[0.98] cursor-pointer"
+            >
+              <span className="text-lg">💬</span>
+              <span>{t('driver', 'gateOpenWhatsapp')}</span>
+            </button>
+
+            <p className="text-[11px] text-slate-500 text-center italic leading-tight px-2">
+              {t('driver', 'gateNote')}
+            </p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="relative w-full h-full flex flex-col bg-slate-100 text-slate-900 overflow-hidden font-sans">
       {/* iPhone / iOS PWA Instructions Modal */}
@@ -898,9 +1020,18 @@ export const DriverView: React.FC = () => {
             {t('driver', 'modeBanner')} ({activePassengerPins.length} {activePassengerPins.length === 1 ? t('driver', 'passengerCountOne') : t('driver', 'passengerCountPlural')})
           </span>
         </div>
-        <span className="text-[10px] text-slate-600 font-bold bg-slate-100 px-2.5 py-0.5 rounded-full border border-slate-200">
-          {t('driver', 'radius')}
-        </span>
+        <div className="flex items-center gap-2">
+          <span className="text-[10px] text-slate-600 font-bold bg-slate-100 px-2.5 py-0.5 rounded-full border border-slate-200">
+            {t('driver', 'radius')}
+          </span>
+          <button
+            type="button"
+            onClick={handleLogout}
+            className="text-[11px] font-bold text-slate-500 hover:text-rose-600 active:text-rose-700 transition-colors underline cursor-pointer px-1"
+          >
+            {t('driver', 'gateLogout')}
+          </button>
+        </div>
       </div>
 
       {/* Map Canvas */}
