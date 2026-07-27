@@ -606,7 +606,7 @@ export const DriverView: React.FC = () => {
 
   // 6. Initialize Leaflet Map
   useEffect(() => {
-    if (!mapContainerRef.current || mapRef.current) return;
+    if (!isVerified || !mapContainerRef.current || mapRef.current) return;
 
     const map = L.map(mapContainerRef.current, {
       center: [driverLocation.lat, driverLocation.lng],
@@ -630,13 +630,43 @@ export const DriverView: React.FC = () => {
 
     mapRef.current = map;
 
+    // Force initial size calculation
+    map.invalidateSize();
+    const initTimer1 = setTimeout(() => map.invalidateSize(), 100);
+    const initTimer2 = setTimeout(() => map.invalidateSize(), 300);
+
     return () => {
+      clearTimeout(initTimer1);
+      clearTimeout(initTimer2);
       if (mapRef.current) {
         mapRef.current.remove();
         mapRef.current = null;
       }
     };
-  }, []);
+  }, [isVerified]);
+
+  // 6.1 Force Leaflet map size recalculation whenever verified state changes or window resizes
+  useEffect(() => {
+    if (!isVerified || !mapRef.current) return;
+
+    const handleResize = () => {
+      if (mapRef.current) {
+        mapRef.current.invalidateSize();
+      }
+    };
+
+    handleResize();
+    const timer1 = setTimeout(handleResize, 100);
+    const timer2 = setTimeout(handleResize, 300);
+
+    window.addEventListener('resize', handleResize);
+
+    return () => {
+      clearTimeout(timer1);
+      clearTimeout(timer2);
+      window.removeEventListener('resize', handleResize);
+    };
+  }, [isVerified]);
 
   // 7. Sync Driver Marker
   useEffect(() => {
